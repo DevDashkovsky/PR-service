@@ -63,6 +63,7 @@ type PullRequestDTO struct {
 	AuthorID          string   `json:"author_id"`
 	Status            string   `json:"status"`
 	AssignedReviewers []string `json:"assigned_reviewers"`
+	MergedAt          *string  `json:"mergedAt,omitempty"`
 }
 
 type CreatePullRequestRequest struct {

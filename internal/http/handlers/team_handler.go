@@ -23,6 +23,7 @@ func (h *TeamHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	var req dto.TeamDTO
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		logger.Log.Warn("Неверный формат запроса создания команды", zap.Error(err))
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
 			Error: dto.Error{
@@ -58,6 +59,7 @@ func (h *TeamHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 			zap.String("team_name", req.TeamName),
 			zap.Error(err),
 		)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
 			Error: dto.Error{
@@ -71,7 +73,7 @@ func (h *TeamHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	logger.Log.Info("Команда успешно создана", zap.String("team_name", req.TeamName))
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated) // 201
+	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(dto.TeamResponse{Team: req})
 }
 
@@ -79,6 +81,7 @@ func (h *TeamHandler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	teamName := r.URL.Query().Get("team_name")
 	if teamName == "" {
 		logger.Log.Warn("Запрос получения команды без team_name")
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
 			Error: dto.Error{
@@ -94,16 +97,24 @@ func (h *TeamHandler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	t, err := h.service.GetTeam(ctx, teamName)
 	if err != nil {
-		logger.Log.Warn("Команда не найдена",
-			zap.String("team_name", teamName),
-			zap.Error(err),
-		)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
+		if errors.Is(err, teams.ErrTeamNotFound) {
+			logger.Log.Warn("Команда не найдена", zap.String("team_name", teamName))
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
+				Error: dto.Error{
+					Code:    teams.TeamNotFound,
+					Message: "resource not found",
+				},
+			})
+			return
+		}
+		logger.Log.Error("Ошибка при получении команды", zap.String("team_name", teamName), zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
 			Error: dto.Error{
-				Code:    teams.TeamNotFound,
-				Message: "resource not found",
+				Code:    teams.InternalError,
+				Message: "internal server error",
 			},
 		})
 		return

@@ -19,4 +19,5 @@ var (
 	ErrNoCandidate    = errors.New("no active replacement candidate in team")
 	ErrPRNotFound     = errors.New("pull request not found")
 	ErrAuthorNotFound = errors.New("author not found")
+	ErrAuthorNoTeam   = errors.New("author has no team")
 )

@@ -54,8 +54,8 @@ func (h *PRHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if errors.Is(err, pr.ErrAuthorNotFound) {
-			logger.Log.Warn("Автор не найден", zap.String("author_id", req.AuthorID))
+		if errors.Is(err, pr.ErrAuthorNotFound) || errors.Is(err, pr.ErrAuthorNoTeam) {
+			logger.Log.Warn("Автор не найден или без команды", zap.String("author_id", req.AuthorID))
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
 				Error: dto.Error{

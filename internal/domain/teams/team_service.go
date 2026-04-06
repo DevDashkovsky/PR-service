@@ -16,7 +16,10 @@ const (
 	TeamNotFound   = "NOT_FOUND"
 )
 
-var ErrTeamExists = errors.New("teams already exists")
+var (
+	ErrTeamExists   = errors.New("teams already exists")
+	ErrTeamNotFound = errors.New("team not found")
+)
 
 type Service struct {
 	teams interfaces.TeamRepository

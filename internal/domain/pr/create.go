@@ -44,7 +44,7 @@ func (s *Service) CreatePR(ctx context.Context, req dto.CreatePullRequestRequest
 
 	if author.TeamName == "" {
 		logger.Log.Warn("У автора нет команды", zap.String("author_id", req.AuthorID))
-		return nil, fmt.Errorf("author has no team")
+		return nil, ErrAuthorNoTeam
 	}
 
 	reviewers, err := s.assignReviewers(ctx, req.AuthorID, author.TeamName)

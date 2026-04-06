@@ -2,10 +2,11 @@ package postgres
 
 import (
 	"AvitoTech/internal/domain/dto"
+	"AvitoTech/internal/domain/user"
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -16,21 +17,13 @@ const (
 		WHERE prr.reviewer_id = $1
 		ORDER BY pr.created_at DESC
 	`
-	setUserActiveQuery      = `UPDATE users SET is_active = $2 WHERE user_id = $1`
-	getUserQuery            = `SELECT user_id, username, team_name, is_active FROM users WHERE user_id = $1`
-	createOrUpdateUserQuery = `
-		INSERT INTO users (user_id, username, team_name, is_active)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id) DO UPDATE
-		SET username = EXCLUDED.username,
-			team_name = EXCLUDED.team_name,
-			is_active = EXCLUDED.is_active
-	`
+	setUserActiveQuery = `UPDATE users SET is_active = $2 WHERE user_id = $1`
+	getUserQuery       = `SELECT user_id, username, team_name, is_active FROM users WHERE user_id = $1`
 	getTeamByNameQuery = `SELECT user_id, username, is_active FROM users WHERE team_name = $1`
 )
 
 type UserRepo struct {
-	db *pgx.Conn
+	db *pgxpool.Pool
 }
 
 func NewUserRepo(db *Postgres) *UserRepo {
@@ -44,8 +37,7 @@ func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.Pul
 	}
 	defer rows.Close()
 
-	var reviews []dto.PullRequestShortDTO
-	reviews = []dto.PullRequestShortDTO{}
+	reviews := []dto.PullRequestShortDTO{}
 	for rows.Next() {
 		var review dto.PullRequestShortDTO
 		if err := rows.Scan(&review.PullRequestID, &review.PullRequestName, &review.AuthorID, &review.Status); err != nil {
@@ -53,14 +45,20 @@ func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.Pul
 		}
 		reviews = append(reviews, review)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка при итерации ревью: %v", err)
+	}
 
 	return reviews, nil
 }
 
 func (r *UserRepo) SetUserActive(ctx context.Context, userID string, isActive bool) (*dto.UserDTO, error) {
-	_, err := r.db.Exec(ctx, setUserActiveQuery, userID, isActive)
+	result, err := r.db.Exec(ctx, setUserActiveQuery, userID, isActive)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при обновлении статуса пользователя: %v", err)
+	}
+	if result.RowsAffected() == 0 {
+		return nil, user.ErrUserNotFound
 	}
 
 	return r.GetUser(ctx, userID)
@@ -73,14 +71,6 @@ func (r *UserRepo) GetUser(ctx context.Context, userID string) (*dto.UserDTO, er
 		return nil, fmt.Errorf("ошибка при получении пользователя: %v", err)
 	}
 	return &user, nil
-}
-
-func (r *UserRepo) CreateOrUpdateUser(ctx context.Context, member dto.TeamMemberDTO, teamName string) error {
-	_, err := r.db.Exec(ctx, createOrUpdateUserQuery, member.UserID, member.Username, teamName, member.IsActive)
-	if err != nil {
-		return fmt.Errorf("ошибка при создании/обновлении пользователя: %v", err)
-	}
-	return nil
 }
 
 func (r *UserRepo) GetTeamByName(ctx context.Context, teamName string) (*dto.TeamDTO, error) {
@@ -97,6 +87,9 @@ func (r *UserRepo) GetTeamByName(ctx context.Context, teamName string) (*dto.Tea
 			return nil, fmt.Errorf("ошибка при чтении участника команды: %v", err)
 		}
 		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка при итерации участников команды: %v", err)
 	}
 
 	return &dto.TeamDTO{

@@ -2,12 +2,15 @@ package postgres
 
 import (
 	"AvitoTech/internal/domain/dto"
+	"AvitoTech/internal/domain/pr"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -16,23 +19,18 @@ const (
 	createPRQuery = `
 		INSERT INTO pull_requests (pull_request_id, pull_request_name, author_id, status, created_at)
 		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (pull_request_id) DO NOTHING
 	`
 
 	getPRQuery = `
-		SELECT pull_request_id, pull_request_name, author_id, status
+		SELECT pull_request_id, pull_request_name, author_id, status, merged_at
 		FROM pull_requests
 		WHERE pull_request_id = $1
 	`
 
-	updatePRStatusQuery = `
+	setMergedQuery = `
 		UPDATE pull_requests
-		SET status = $2
-		WHERE pull_request_id = $1
-	`
-
-	setMergedAtQuery = `
-		UPDATE pull_requests
-		SET merged_at = $2
+		SET status = 'MERGED', merged_at = $2
 		WHERE pull_request_id = $1
 	`
 
@@ -62,7 +60,7 @@ const (
 )
 
 type PRRepo struct {
-	db *pgx.Conn
+	db *pgxpool.Pool
 }
 
 func NewPRRepo(db *Postgres) *PRRepo {
@@ -79,26 +77,36 @@ func (r *PRRepo) PRExists(ctx context.Context, prID string) (bool, error) {
 }
 
 func (r *PRRepo) CreatePR(ctx context.Context, prID, prName, authorID string) error {
-	_, err := r.db.Exec(ctx, createPRQuery, prID, prName, authorID, dto.StatusOpen, time.Now())
+	result, err := r.db.Exec(ctx, createPRQuery, prID, prName, authorID, dto.StatusOpen, time.Now())
 	if err != nil {
 		return fmt.Errorf("ошибка при создании PR: %v", err)
+	}
+	if result.RowsAffected() == 0 {
+		return pr.ErrPRExists
 	}
 	return nil
 }
 
 func (r *PRRepo) GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, error) {
 	var pr dto.PullRequestDTO
+	var mergedAt pgtype.Timestamptz
 	err := r.db.QueryRow(ctx, getPRQuery, prID).Scan(
 		&pr.PullRequestID,
 		&pr.PullRequestName,
 		&pr.AuthorID,
 		&pr.Status,
+		&mergedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("PR не найден")
 		}
 		return nil, fmt.Errorf("ошибка при получении PR: %v", err)
+	}
+
+	if mergedAt.Valid {
+		s := mergedAt.Time.Format(time.RFC3339)
+		pr.MergedAt = &s
 	}
 
 	reviewers, err := r.GetReviewers(ctx, prID)
@@ -110,18 +118,10 @@ func (r *PRRepo) GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, e
 	return &pr, nil
 }
 
-func (r *PRRepo) UpdatePRStatus(ctx context.Context, prID, status string) error {
-	_, err := r.db.Exec(ctx, updatePRStatusQuery, prID, status)
+func (r *PRRepo) SetMerged(ctx context.Context, prID string, mergedAt time.Time) error {
+	_, err := r.db.Exec(ctx, setMergedQuery, prID, mergedAt)
 	if err != nil {
-		return fmt.Errorf("ошибка при обновлении статуса PR: %v", err)
-	}
-	return nil
-}
-
-func (r *PRRepo) SetMergedAt(ctx context.Context, prID string) error {
-	_, err := r.db.Exec(ctx, setMergedAtQuery, prID, time.Now())
-	if err != nil {
-		return fmt.Errorf("ошибка при установке времени мерджа: %v", err)
+		return fmt.Errorf("ошибка при мердже PR: %v", err)
 	}
 	return nil
 }
@@ -141,33 +141,37 @@ func (r *PRRepo) GetReviewers(ctx context.Context, prID string) ([]string, error
 		}
 		reviewers = append(reviewers, reviewerID)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка при итерации ревьюверов: %v", err)
+	}
 
 	return reviewers, nil
 }
 
 func (r *PRRepo) AssignReviewers(ctx context.Context, prID string, reviewerIDs []string) error {
 	for _, reviewerID := range reviewerIDs {
-		if err := r.AddReviewer(ctx, prID, reviewerID); err != nil {
-			return err
+		if _, err := r.db.Exec(ctx, assignReviewerQuery, prID, reviewerID); err != nil {
+			return fmt.Errorf("ошибка при назначении ревьювера: %v", err)
 		}
 	}
 	return nil
 }
 
-func (r *PRRepo) RemoveReviewer(ctx context.Context, prID, reviewerID string) error {
-	_, err := r.db.Exec(ctx, removeReviewerQuery, prID, reviewerID)
+func (r *PRRepo) ReplaceReviewer(ctx context.Context, prID, oldReviewerID, newReviewerID string) error {
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("ошибка при начале транзакции: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err = tx.Exec(ctx, removeReviewerQuery, prID, oldReviewerID); err != nil {
 		return fmt.Errorf("ошибка при удалении ревьювера: %v", err)
 	}
-	return nil
-}
-
-func (r *PRRepo) AddReviewer(ctx context.Context, prID, reviewerID string) error {
-	_, err := r.db.Exec(ctx, assignReviewerQuery, prID, reviewerID)
-	if err != nil {
-		return fmt.Errorf("ошибка при назначении ревьювера: %v", err)
+	if _, err = tx.Exec(ctx, assignReviewerQuery, prID, newReviewerID); err != nil {
+		return fmt.Errorf("ошибка при добавлении ревьювера: %v", err)
 	}
-	return nil
+
+	return tx.Commit(ctx)
 }
 
 func (r *PRRepo) IsReviewerAssigned(ctx context.Context, prID, reviewerID string) (bool, error) {

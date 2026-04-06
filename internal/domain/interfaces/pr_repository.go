@@ -3,6 +3,7 @@ package interfaces
 import (
 	"AvitoTech/internal/domain/dto"
 	"context"
+	"time"
 )
 
 type PRRepository interface {
@@ -12,13 +13,10 @@ type PRRepository interface {
 
 	GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, error)
 
-	UpdatePRStatus(ctx context.Context, prID, status string) error
-
-	SetMergedAt(ctx context.Context, prID string) error
+	SetMerged(ctx context.Context, prID string, mergedAt time.Time) error
 
 	GetReviewers(ctx context.Context, prID string) ([]string, error)
 	AssignReviewers(ctx context.Context, prID string, reviewerIDs []string) error
-	RemoveReviewer(ctx context.Context, prID, reviewerID string) error
-	AddReviewer(ctx context.Context, prID, reviewerID string) error
+	ReplaceReviewer(ctx context.Context, prID, oldReviewerID, newReviewerID string) error
 	IsReviewerAssigned(ctx context.Context, prID, reviewerID string) (bool, error)
 }

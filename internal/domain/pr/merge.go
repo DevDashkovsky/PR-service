@@ -26,9 +26,10 @@ func (s *Service) MergePR(ctx context.Context, req dto.MergePullRequestRequest) 
 
 	if pr.Status == dto.StatusMerged {
 		logger.Log.Info("PR уже смерджен", zap.String("pr_id", req.PullRequestID))
-
-		mergedAt := time.Now().Format(time.RFC3339)
-
+		mergedAt := ""
+		if pr.MergedAt != nil {
+			mergedAt = *pr.MergedAt
+		}
 		return &dto.MergedPullRequestDTO{
 			PullRequestID:     pr.PullRequestID,
 			PullRequestName:   pr.PullRequestName,
@@ -39,21 +40,17 @@ func (s *Service) MergePR(ctx context.Context, req dto.MergePullRequestRequest) 
 		}, nil
 	}
 
-	if err := s.prRepo.UpdatePRStatus(ctx, req.PullRequestID, dto.StatusMerged); err != nil {
-		logger.Log.Error("Ошибка при обновлении статуса PR", zap.Error(err))
-		return nil, fmt.Errorf("ошибка при обновлении статуса: %w", err)
-	}
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
 
-	if err := s.prRepo.SetMergedAt(ctx, req.PullRequestID); err != nil {
-		logger.Log.Error("Ошибка при установке времени мерджа", zap.Error(err))
-		return nil, fmt.Errorf("ошибка при установке времени мерджа: %w", err)
+	if err := s.prRepo.SetMerged(ctx, req.PullRequestID, now); err != nil {
+		logger.Log.Error("Ошибка при мердже PR", zap.Error(err))
+		return nil, fmt.Errorf("ошибка при мердже PR: %w", err)
 	}
-
-	mergedAt := time.Now().Format(time.RFC3339)
 
 	logger.Log.Info("PR успешно смерджен",
 		zap.String("pr_id", req.PullRequestID),
-		zap.String("merged_at", mergedAt),
+		zap.String("merged_at", nowStr),
 	)
 
 	return &dto.MergedPullRequestDTO{
@@ -62,6 +59,6 @@ func (s *Service) MergePR(ctx context.Context, req dto.MergePullRequestRequest) 
 		AuthorID:          pr.AuthorID,
 		Status:            dto.StatusMerged,
 		AssignedReviewers: pr.AssignedReviewers,
-		MergedAt:          mergedAt,
+		MergedAt:          nowStr,
 	}, nil
 }

@@ -2,10 +2,13 @@ package postgres
 
 import (
 	"AvitoTech/internal/domain/dto"
+	"AvitoTech/internal/domain/teams"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -24,7 +27,7 @@ const (
 )
 
 type TeamRepo struct {
-	db *pgx.Conn
+	db *pgxpool.Pool
 }
 
 func NewTeamRepo(db *Postgres) *TeamRepo {
@@ -65,6 +68,9 @@ func (r *TeamRepo) GetTeam(ctx context.Context, name string) (dto.TeamDTO, error
 	var teamName string
 	err := r.db.QueryRow(ctx, getTeamQuery, name).Scan(&teamName)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return dto.TeamDTO{}, teams.ErrTeamNotFound
+		}
 		return dto.TeamDTO{}, fmt.Errorf("ошибка при получении команды: %v", err)
 	}
 
@@ -81,6 +87,9 @@ func (r *TeamRepo) GetTeam(ctx context.Context, name string) (dto.TeamDTO, error
 			return dto.TeamDTO{}, fmt.Errorf("ошибка при чтении участников команды: %v", err)
 		}
 		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return dto.TeamDTO{}, fmt.Errorf("ошибка при итерации участников команды: %v", err)
 	}
 
 	return dto.TeamDTO{

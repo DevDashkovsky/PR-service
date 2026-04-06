@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 type Postgres struct {
-	conn *pgx.Conn
+	conn *pgxpool.Pool
 }
 
 func (db *Postgres) createConnectPath() (string, error) {
@@ -27,11 +27,11 @@ func (db *Postgres) createConnectPath() (string, error) {
 
 	dbURL := fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		dbParam[0], // DB_USER
-		dbParam[1], // DB_PASSWORD
-		dbParam[2], // DB_HOST
-		dbParam[3], // DB_PORT
-		dbParam[4], // DB_NAME
+		dbParam[0],
+		dbParam[1],
+		dbParam[2],
+		dbParam[3],
+		dbParam[4],
 	)
 
 	return dbURL, nil
@@ -50,24 +50,42 @@ func NewDB() (*Postgres, error) {
 		zap.String("database", os.Getenv("DB_NAME")),
 	)
 
-	time.Sleep(5 * time.Second)
+	const maxAttempts = 10
+	const retryDelay = 2 * time.Second
 
-	conn, err := pgx.Connect(context.Background(), path)
+	var pool *pgxpool.Pool
+	for i := range maxAttempts {
+		pool, err = pgxpool.New(context.Background(), path)
+		if err == nil {
+			if pingErr := pool.Ping(context.Background()); pingErr == nil {
+				break
+			} else {
+				pool.Close()
+				err = pingErr
+			}
+		}
+		logger.Log.Warn("БД недоступна, повтор...",
+			zap.Int("attempt", i+1),
+			zap.Int("max", maxAttempts),
+			zap.Error(err),
+		)
+		time.Sleep(retryDelay)
+	}
 	if err != nil {
-		logger.Log.Error("Ошибка подключения к БД", zap.Error(err))
 		return db, fmt.Errorf("ошибка подключения к базе данных: %w", err)
 	}
-	db.conn = conn
 
+	db.conn = pool
 	logger.Log.Info("Успешное подключение к PostgreSQL")
 
 	return db, nil
 }
 
 func (db *Postgres) CloseDB() error {
-	return db.conn.Close(context.Background())
+	db.conn.Close()
+	return nil
 }
 
-func (db *Postgres) GetConn() *pgx.Conn {
+func (db *Postgres) GetConn() *pgxpool.Pool {
 	return db.conn
 }

@@ -67,14 +67,9 @@ func (s *Service) ReassignReviewer(ctx context.Context, req dto.ReassignPullRequ
 		return nil, err
 	}
 
-	if err := s.prRepo.RemoveReviewer(ctx, req.PullRequestID, req.OldUserID); err != nil {
-		logger.Log.Error("Ошибка при удалении старого ревьювера", zap.Error(err))
-		return nil, fmt.Errorf("ошибка при удалении ревьювера: %w", err)
-	}
-
-	if err := s.prRepo.AddReviewer(ctx, req.PullRequestID, newReviewer); err != nil {
-		logger.Log.Error("Ошибка при добавлении нового ревьювера", zap.Error(err))
-		return nil, fmt.Errorf("ошибка при добавлении ревьювера: %w", err)
+	if err := s.prRepo.ReplaceReviewer(ctx, req.PullRequestID, req.OldUserID, newReviewer); err != nil {
+		logger.Log.Error("Ошибка при переназначении ревьювера", zap.Error(err))
+		return nil, fmt.Errorf("ошибка при переназначении ревьювера: %w", err)
 	}
 
 	logger.Log.Info("Ревьювер успешно переназначен",
