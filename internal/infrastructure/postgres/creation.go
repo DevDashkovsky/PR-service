@@ -1,7 +1,7 @@
 package postgres
 
 import (
-	"AvitoTech/pkg/logger"
+	"pr-service/pkg/logger"
 	"context"
 	"fmt"
 	"os"
@@ -84,8 +84,4 @@ func NewDB() (*Postgres, error) {
 func (db *Postgres) CloseDB() error {
 	db.conn.Close()
 	return nil
-}
-
-func (db *Postgres) GetConn() *pgxpool.Pool {
-	return db.conn
 }

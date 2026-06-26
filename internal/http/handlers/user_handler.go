@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/internal/domain/user"
-	"AvitoTech/pkg/logger"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/user"
+	"pr-service/pkg/logger"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,14 +24,7 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 
 	if userID == "" {
 		logger.Log.Warn("Запрос получения PR без user_id")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
-			Error: dto.Error{
-				Code:    user.BadRequest,
-				Message: "user_id is required",
-			},
-		})
+		writeError(w, http.StatusBadRequest, user.BadRequest, "user_id is required")
 		return
 	}
 
@@ -43,14 +36,7 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 			zap.String("user_id", userID),
 			zap.Error(err),
 		)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
-			Error: dto.Error{
-				Code:    user.InternalError,
-				Message: "internal server error",
-			},
-		})
+		writeError(w, http.StatusInternalServerError, user.InternalError, "internal server error")
 		return
 	}
 
@@ -59,28 +45,17 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 		zap.Int("pr_count", len(reviews)),
 	)
 
-	response := dto.GetUserReviewsResponse{
+	writeJSON(w, http.StatusOK, dto.GetUserReviewsResponse{
 		UserID:       userID,
 		PullRequests: reviews,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(response)
+	})
 }
 
 func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	var req dto.SetUserActiveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		logger.Log.Warn("Неверный формат запроса изменения активности", zap.Error(err))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
-			Error: dto.Error{
-				Code:    user.BadRequest,
-				Message: "invalid request body",
-			},
-		})
+		writeError(w, http.StatusBadRequest, user.BadRequest, "invalid request body")
 		return
 	}
 
@@ -91,31 +66,17 @@ func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.service.SetUserActive(r.Context(), req.UserID, req.IsActive)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-
-		if errors.Is(err, user.ErrUserNotFound) {
+		switch {
+		case errors.Is(err, user.ErrUserNotFound):
 			logger.Log.Warn("Пользователь не найден", zap.String("user_id", req.UserID))
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
-				Error: dto.Error{
-					Code:    user.UserNotFound,
-					Message: "user not found",
-				},
-			})
-			return
+			writeError(w, http.StatusNotFound, user.UserNotFound, "user not found")
+		default:
+			logger.Log.Error("Ошибка изменения активности пользователя",
+				zap.String("user_id", req.UserID),
+				zap.Error(err),
+			)
+			writeError(w, http.StatusInternalServerError, user.InternalError, "internal server error")
 		}
-
-		logger.Log.Error("Ошибка изменения активности пользователя",
-			zap.String("user_id", req.UserID),
-			zap.Error(err),
-		)
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(dto.ErrorResponse{
-			Error: dto.Error{
-				Code:    user.InternalError,
-				Message: "internal server error",
-			},
-		})
 		return
 	}
 
@@ -124,7 +85,5 @@ func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 		zap.Bool("is_active", req.IsActive),
 	)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(dto.UserResponse{User: *u})
+	writeJSON(w, http.StatusOK, dto.UserResponse{User: *u})
 }

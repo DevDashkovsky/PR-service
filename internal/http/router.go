@@ -1,15 +1,21 @@
 package http
 
 import (
-	"AvitoTech/internal/http/handlers"
-	"log"
 	"net/http"
+	"pr-service/internal/http/handlers"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
+
+const maxRequestBody = 1 << 20
 
 func NewRouter(teamHandler *handlers.TeamHandler, userHandler *handlers.UserHandler, prHandler *handlers.PRHandler) *chi.Mux {
 	r := chi.NewRouter()
+
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestSize(maxRequestBody))
 
 	r.Route("/team", func(r chi.Router) {
 		r.Post("/add", teamHandler.CreateTeam)
@@ -30,7 +36,13 @@ func NewRouter(teamHandler *handlers.TeamHandler, userHandler *handlers.UserHand
 	return r
 }
 
-func StartServer(router *chi.Mux, addr string) error {
-	log.Printf("Сервер запущен на %s", addr)
-	return http.ListenAndServe(addr, router)
+func NewServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }

@@ -1,9 +1,9 @@
 package teams
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/internal/domain/interfaces"
-	"AvitoTech/pkg/validator"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/interfaces"
+	"pr-service/pkg/validator"
 	"context"
 	"errors"
 	"fmt"
@@ -60,7 +60,7 @@ func (s *Service) CreateTeam(ctx context.Context, req dto.TeamDTO) error {
 
 	exists, err := s.teams.TeamExists(ctx, req.TeamName)
 	if err != nil {
-		return fmt.Errorf("ошибка при проверке существования команды: %v", err)
+		return fmt.Errorf("ошибка при проверке существования команды: %w", err)
 	}
 	if exists {
 		return ErrTeamExists
@@ -68,7 +68,7 @@ func (s *Service) CreateTeam(ctx context.Context, req dto.TeamDTO) error {
 
 	err = s.teams.CreateTeam(ctx, req)
 	if err != nil {
-		return fmt.Errorf("ошибка при создании команды: %v", err)
+		return fmt.Errorf("ошибка при создании команды: %w", err)
 	}
 
 	return nil

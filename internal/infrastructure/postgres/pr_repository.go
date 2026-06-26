@@ -1,11 +1,11 @@
 package postgres
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/internal/domain/pr"
 	"context"
 	"errors"
 	"fmt"
+	"pr-service/internal/domain/dto"
+	prdomain "pr-service/internal/domain/pr"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -71,20 +71,44 @@ func (r *PRRepo) PRExists(ctx context.Context, prID string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx, prExistsQuery, prID).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("ошибка при проверке существования PR: %v", err)
+		return false, fmt.Errorf("ошибка при проверке существования PR: %w", err)
 	}
 	return exists, nil
 }
 
-func (r *PRRepo) CreatePR(ctx context.Context, prID, prName, authorID string) error {
-	result, err := r.db.Exec(ctx, createPRQuery, prID, prName, authorID, dto.StatusOpen, time.Now())
+func (r *PRRepo) CreatePRWithReviewers(ctx context.Context, prID, prName, authorID string, reviewerIDs []string) error {
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("ошибка при создании PR: %v", err)
+		return fmt.Errorf("ошибка при начале транзакции: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	result, err := tx.Exec(ctx, createPRQuery, prID, prName, authorID, dto.StatusOpen, time.Now())
+	if err != nil {
+		return fmt.Errorf("ошибка при создании PR: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return pr.ErrPRExists
+		return prdomain.ErrPRExists
 	}
-	return nil
+
+	if len(reviewerIDs) > 0 {
+		batch := &pgx.Batch{}
+		for _, reviewerID := range reviewerIDs {
+			batch.Queue(assignReviewerQuery, prID, reviewerID)
+		}
+		br := tx.SendBatch(ctx, batch)
+		for range reviewerIDs {
+			if _, err := br.Exec(); err != nil {
+				_ = br.Close()
+				return fmt.Errorf("ошибка при назначении ревьювера: %w", err)
+			}
+		}
+		if err := br.Close(); err != nil {
+			return fmt.Errorf("ошибка при назначении ревьюверов: %w", err)
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (r *PRRepo) GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, error) {
@@ -99,9 +123,9 @@ func (r *PRRepo) GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, e
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("PR не найден")
+			return nil, prdomain.ErrPRNotFound
 		}
-		return nil, fmt.Errorf("ошибка при получении PR: %v", err)
+		return nil, fmt.Errorf("ошибка при получении PR: %w", err)
 	}
 
 	if mergedAt.Valid {
@@ -121,7 +145,7 @@ func (r *PRRepo) GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, e
 func (r *PRRepo) SetMerged(ctx context.Context, prID string, mergedAt time.Time) error {
 	_, err := r.db.Exec(ctx, setMergedQuery, prID, mergedAt)
 	if err != nil {
-		return fmt.Errorf("ошибка при мердже PR: %v", err)
+		return fmt.Errorf("ошибка при мердже PR: %w", err)
 	}
 	return nil
 }
@@ -129,7 +153,7 @@ func (r *PRRepo) SetMerged(ctx context.Context, prID string, mergedAt time.Time)
 func (r *PRRepo) GetReviewers(ctx context.Context, prID string) ([]string, error) {
 	rows, err := r.db.Query(ctx, getReviewersQuery, prID)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении ревьюверов: %v", err)
+		return nil, fmt.Errorf("ошибка при получении ревьюверов: %w", err)
 	}
 	defer rows.Close()
 
@@ -137,38 +161,29 @@ func (r *PRRepo) GetReviewers(ctx context.Context, prID string) ([]string, error
 	for rows.Next() {
 		var reviewerID string
 		if err := rows.Scan(&reviewerID); err != nil {
-			return nil, fmt.Errorf("ошибка при чтении ревьювера: %v", err)
+			return nil, fmt.Errorf("ошибка при чтении ревьювера: %w", err)
 		}
 		reviewers = append(reviewers, reviewerID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при итерации ревьюверов: %v", err)
+		return nil, fmt.Errorf("ошибка при итерации ревьюверов: %w", err)
 	}
 
 	return reviewers, nil
 }
 
-func (r *PRRepo) AssignReviewers(ctx context.Context, prID string, reviewerIDs []string) error {
-	for _, reviewerID := range reviewerIDs {
-		if _, err := r.db.Exec(ctx, assignReviewerQuery, prID, reviewerID); err != nil {
-			return fmt.Errorf("ошибка при назначении ревьювера: %v", err)
-		}
-	}
-	return nil
-}
-
 func (r *PRRepo) ReplaceReviewer(ctx context.Context, prID, oldReviewerID, newReviewerID string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("ошибка при начале транзакции: %v", err)
+		return fmt.Errorf("ошибка при начале транзакции: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err = tx.Exec(ctx, removeReviewerQuery, prID, oldReviewerID); err != nil {
-		return fmt.Errorf("ошибка при удалении ревьювера: %v", err)
+		return fmt.Errorf("ошибка при удалении ревьювера: %w", err)
 	}
 	if _, err = tx.Exec(ctx, assignReviewerQuery, prID, newReviewerID); err != nil {
-		return fmt.Errorf("ошибка при добавлении ревьювера: %v", err)
+		return fmt.Errorf("ошибка при добавлении ревьювера: %w", err)
 	}
 
 	return tx.Commit(ctx)
@@ -178,7 +193,7 @@ func (r *PRRepo) IsReviewerAssigned(ctx context.Context, prID, reviewerID string
 	var exists bool
 	err := r.db.QueryRow(ctx, isReviewerAssignedQuery, prID, reviewerID).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("ошибка при проверке назначения ревьювера: %v", err)
+		return false, fmt.Errorf("ошибка при проверке назначения ревьювера: %w", err)
 	}
 	return exists, nil
 }

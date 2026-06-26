@@ -1,7 +1,7 @@
 package pr
 
 import (
-	"AvitoTech/internal/domain/interfaces"
+	"pr-service/internal/domain/interfaces"
 )
 
 type Service struct {

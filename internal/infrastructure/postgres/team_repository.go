@@ -1,15 +1,18 @@
 package postgres
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/internal/domain/teams"
 	"context"
 	"errors"
 	"fmt"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/teams"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const uniqueViolationCode = "23505"
 
 const (
 	teamExistQuery  = `SELECT EXISTS(SELECT 1 FROM teams WHERE team_name = $1)`
@@ -38,30 +41,38 @@ func (r *TeamRepo) TeamExists(ctx context.Context, name string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx, teamExistQuery, name).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("ошибка при проверке существования команды: %v", err)
+		return false, fmt.Errorf("ошибка при проверке существования команды: %w", err)
 	}
 	return exists, nil
 }
 
 func (r *TeamRepo) CreateTeam(ctx context.Context, team dto.TeamDTO) error {
-	_, err := r.db.Exec(ctx, createTeamQuery, team.TeamName)
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("ошибка при создании команды: %v", err)
+		return fmt.Errorf("ошибка при начале транзакции: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, createTeamQuery, team.TeamName); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode {
+			return teams.ErrTeamExists
+		}
+		return fmt.Errorf("ошибка при создании команды: %w", err)
 	}
 
 	for _, member := range team.Members {
-		_, err := r.db.Exec(ctx, upsertUserQuery,
+		if _, err := tx.Exec(ctx, upsertUserQuery,
 			member.UserID,
 			member.Username,
 			team.TeamName,
 			member.IsActive,
-		)
-		if err != nil {
-			return fmt.Errorf("ошибка при добавлении пользователя %s: %v", member.UserID, err)
+		); err != nil {
+			return fmt.Errorf("ошибка при добавлении пользователя %s: %w", member.UserID, err)
 		}
 	}
 
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (r *TeamRepo) GetTeam(ctx context.Context, name string) (dto.TeamDTO, error) {
@@ -71,12 +82,12 @@ func (r *TeamRepo) GetTeam(ctx context.Context, name string) (dto.TeamDTO, error
 		if errors.Is(err, pgx.ErrNoRows) {
 			return dto.TeamDTO{}, teams.ErrTeamNotFound
 		}
-		return dto.TeamDTO{}, fmt.Errorf("ошибка при получении команды: %v", err)
+		return dto.TeamDTO{}, fmt.Errorf("ошибка при получении команды: %w", err)
 	}
 
 	rows, err := r.db.Query(ctx, getUsersQuery, teamName)
 	if err != nil {
-		return dto.TeamDTO{}, fmt.Errorf("ошибка при получении участников команды: %v", err)
+		return dto.TeamDTO{}, fmt.Errorf("ошибка при получении участников команды: %w", err)
 	}
 	defer rows.Close()
 
@@ -84,12 +95,12 @@ func (r *TeamRepo) GetTeam(ctx context.Context, name string) (dto.TeamDTO, error
 	for rows.Next() {
 		var member dto.TeamMemberDTO
 		if err := rows.Scan(&member.UserID, &member.Username, &member.IsActive); err != nil {
-			return dto.TeamDTO{}, fmt.Errorf("ошибка при чтении участников команды: %v", err)
+			return dto.TeamDTO{}, fmt.Errorf("ошибка при чтении участников команды: %w", err)
 		}
 		members = append(members, member)
 	}
 	if err := rows.Err(); err != nil {
-		return dto.TeamDTO{}, fmt.Errorf("ошибка при итерации участников команды: %v", err)
+		return dto.TeamDTO{}, fmt.Errorf("ошибка при итерации участников команды: %w", err)
 	}
 
 	return dto.TeamDTO{

@@ -1,10 +1,9 @@
 package pr
 
 import (
-	"AvitoTech/pkg/logger"
 	"context"
 	"math/rand"
-	"time"
+	"pr-service/pkg/logger"
 
 	"go.uber.org/zap"
 )
@@ -60,11 +59,10 @@ func selectRandomReviewers(candidates []string, maxCount int) []string {
 		return candidates
 	}
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	shuffled := make([]string, len(candidates))
 	copy(shuffled, candidates)
 
-	r.Shuffle(len(shuffled), func(i, j int) {
+	rand.Shuffle(len(shuffled), func(i, j int) {
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	})
 

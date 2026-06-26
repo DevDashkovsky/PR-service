@@ -1,11 +1,13 @@
 package postgres
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/internal/domain/user"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/user"
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,7 +35,7 @@ func NewUserRepo(db *Postgres) *UserRepo {
 func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.PullRequestShortDTO, error) {
 	rows, err := r.db.Query(ctx, getUserReviewsQuery, userID)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении ревью пользователя: %v", err)
+		return nil, fmt.Errorf("ошибка при получении ревью пользователя: %w", err)
 	}
 	defer rows.Close()
 
@@ -41,12 +43,12 @@ func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.Pul
 	for rows.Next() {
 		var review dto.PullRequestShortDTO
 		if err := rows.Scan(&review.PullRequestID, &review.PullRequestName, &review.AuthorID, &review.Status); err != nil {
-			return nil, fmt.Errorf("ошибка при чтении ревью: %v", err)
+			return nil, fmt.Errorf("ошибка при чтении ревью: %w", err)
 		}
 		reviews = append(reviews, review)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при итерации ревью: %v", err)
+		return nil, fmt.Errorf("ошибка при итерации ревью: %w", err)
 	}
 
 	return reviews, nil
@@ -55,7 +57,7 @@ func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.Pul
 func (r *UserRepo) SetUserActive(ctx context.Context, userID string, isActive bool) (*dto.UserDTO, error) {
 	result, err := r.db.Exec(ctx, setUserActiveQuery, userID, isActive)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при обновлении статуса пользователя: %v", err)
+		return nil, fmt.Errorf("ошибка при обновлении статуса пользователя: %w", err)
 	}
 	if result.RowsAffected() == 0 {
 		return nil, user.ErrUserNotFound
@@ -65,18 +67,21 @@ func (r *UserRepo) SetUserActive(ctx context.Context, userID string, isActive bo
 }
 
 func (r *UserRepo) GetUser(ctx context.Context, userID string) (*dto.UserDTO, error) {
-	var user dto.UserDTO
-	err := r.db.QueryRow(ctx, getUserQuery, userID).Scan(&user.UserID, &user.Username, &user.TeamName, &user.IsActive)
+	var u dto.UserDTO
+	err := r.db.QueryRow(ctx, getUserQuery, userID).Scan(&u.UserID, &u.Username, &u.TeamName, &u.IsActive)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении пользователя: %v", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, user.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("ошибка при получении пользователя: %w", err)
 	}
-	return &user, nil
+	return &u, nil
 }
 
 func (r *UserRepo) GetTeamByName(ctx context.Context, teamName string) (*dto.TeamDTO, error) {
 	rows, err := r.db.Query(ctx, getTeamByNameQuery, teamName)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении команды: %v", err)
+		return nil, fmt.Errorf("ошибка при получении команды: %w", err)
 	}
 	defer rows.Close()
 
@@ -84,12 +89,12 @@ func (r *UserRepo) GetTeamByName(ctx context.Context, teamName string) (*dto.Tea
 	for rows.Next() {
 		var member dto.TeamMemberDTO
 		if err := rows.Scan(&member.UserID, &member.Username, &member.IsActive); err != nil {
-			return nil, fmt.Errorf("ошибка при чтении участника команды: %v", err)
+			return nil, fmt.Errorf("ошибка при чтении участника команды: %w", err)
 		}
 		members = append(members, member)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при итерации участников команды: %v", err)
+		return nil, fmt.Errorf("ошибка при итерации участников команды: %w", err)
 	}
 
 	return &dto.TeamDTO{

@@ -1,10 +1,11 @@
 package pr
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/pkg/logger"
-	"AvitoTech/pkg/validator"
+	"pr-service/internal/domain/dto"
+	"pr-service/pkg/logger"
+	"pr-service/pkg/validator"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func (s *Service) MergePR(ctx context.Context, req dto.MergePullRequestRequest) (*dto.MergedPullRequestDTO, error) {
-	if err := validator.ValidateUserID(req.PullRequestID); err != nil {
+	if err := validator.ValidatePullRequestID(req.PullRequestID); err != nil {
 		return nil, fmt.Errorf("invalid pull_request_id: %w", err)
 	}
 
@@ -20,8 +21,12 @@ func (s *Service) MergePR(ctx context.Context, req dto.MergePullRequestRequest) 
 
 	pr, err := s.prRepo.GetPR(ctx, req.PullRequestID)
 	if err != nil {
-		logger.Log.Error("PR не найден", zap.String("pr_id", req.PullRequestID), zap.Error(err))
-		return nil, ErrPRNotFound
+		if errors.Is(err, ErrPRNotFound) {
+			logger.Log.Warn("PR не найден", zap.String("pr_id", req.PullRequestID))
+			return nil, ErrPRNotFound
+		}
+		logger.Log.Error("Ошибка при получении PR", zap.String("pr_id", req.PullRequestID), zap.Error(err))
+		return nil, fmt.Errorf("ошибка при получении PR: %w", err)
 	}
 
 	if pr.Status == dto.StatusMerged {

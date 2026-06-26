@@ -1,17 +1,19 @@
 package pr
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/pkg/logger"
-	"AvitoTech/pkg/validator"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/user"
+	"pr-service/pkg/logger"
+	"pr-service/pkg/validator"
 	"context"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
 )
 
 func (s *Service) CreatePR(ctx context.Context, req dto.CreatePullRequestRequest) (*dto.PullRequestDTO, error) {
-	if err := validator.ValidateUserID(req.PullRequestID); err != nil {
+	if err := validator.ValidatePullRequestID(req.PullRequestID); err != nil {
 		return nil, fmt.Errorf("invalid pull_request_id: %w", err)
 	}
 	if err := validator.ValidateUsername(req.PullRequestName); err != nil {
@@ -38,8 +40,12 @@ func (s *Service) CreatePR(ctx context.Context, req dto.CreatePullRequestRequest
 
 	author, err := s.userRepo.GetUser(ctx, req.AuthorID)
 	if err != nil {
-		logger.Log.Error("Автор не найден", zap.String("author_id", req.AuthorID), zap.Error(err))
-		return nil, ErrAuthorNotFound
+		if errors.Is(err, user.ErrUserNotFound) {
+			logger.Log.Warn("Автор не найден", zap.String("author_id", req.AuthorID))
+			return nil, ErrAuthorNotFound
+		}
+		logger.Log.Error("Ошибка при получении автора", zap.String("author_id", req.AuthorID), zap.Error(err))
+		return nil, fmt.Errorf("ошибка при получении автора: %w", err)
 	}
 
 	if author.TeamName == "" {
@@ -53,16 +59,9 @@ func (s *Service) CreatePR(ctx context.Context, req dto.CreatePullRequestRequest
 		return nil, fmt.Errorf("ошибка при назначении ревьюверов: %w", err)
 	}
 
-	if err := s.prRepo.CreatePR(ctx, req.PullRequestID, req.PullRequestName, req.AuthorID); err != nil {
+	if err := s.prRepo.CreatePRWithReviewers(ctx, req.PullRequestID, req.PullRequestName, req.AuthorID, reviewers); err != nil {
 		logger.Log.Error("Ошибка при создании PR в БД", zap.Error(err))
 		return nil, fmt.Errorf("ошибка при создании PR: %w", err)
-	}
-
-	if len(reviewers) > 0 {
-		if err := s.prRepo.AssignReviewers(ctx, req.PullRequestID, reviewers); err != nil {
-			logger.Log.Error("Ошибка при назначении ревьюверов в БД", zap.Error(err))
-			return nil, fmt.Errorf("ошибка при назначении ревьюверов: %w", err)
-		}
 	}
 
 	logger.Log.Info("PR успешно создан",

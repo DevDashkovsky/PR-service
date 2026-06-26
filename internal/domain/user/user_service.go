@@ -1,9 +1,9 @@
 package user
 
 import (
-	"AvitoTech/internal/domain/dto"
-	"AvitoTech/internal/domain/interfaces"
-	"AvitoTech/pkg/validator"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/interfaces"
+	"pr-service/pkg/validator"
 	"context"
 	"errors"
 	"fmt"

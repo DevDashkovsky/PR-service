@@ -1,15 +1,21 @@
 package main
 
 import (
-	"AvitoTech/internal/domain/pr"
-	"AvitoTech/internal/domain/teams"
-	"AvitoTech/internal/domain/user"
-	"AvitoTech/internal/http"
-	"AvitoTech/internal/http/handlers"
-	"AvitoTech/internal/infrastructure/postgres"
-	"AvitoTech/pkg/logger"
+	"context"
+	"errors"
 	"log"
+	stdhttp "net/http"
 	"os"
+	"os/signal"
+	"pr-service/internal/domain/pr"
+	"pr-service/internal/domain/teams"
+	"pr-service/internal/domain/user"
+	"pr-service/internal/http"
+	"pr-service/internal/http/handlers"
+	"pr-service/internal/infrastructure/postgres"
+	"pr-service/pkg/logger"
+	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -52,9 +58,33 @@ func main() {
 		port = "8080"
 	}
 
-	logger.Log.Info("Запуск HTTP сервера", zap.String("port", port))
+	server := http.NewServer(":"+port, router)
 
-	if err := http.StartServer(router, ":"+port); err != nil {
+	// Запускаем сервер в отдельной горутине, чтобы main мог ждать сигнал завершения.
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.Log.Info("Запуск HTTP сервера", zap.String("port", port))
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
 		logger.Log.Fatal("Ошибка запуска сервера", zap.Error(err))
+	case sig := <-stop:
+		logger.Log.Info("Получен сигнал завершения, останавливаем сервер", zap.String("signal", sig.String()))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Log.Error("Ошибка при остановке сервера", zap.Error(err))
+	} else {
+		logger.Log.Info("Сервер корректно остановлен")
 	}
 }

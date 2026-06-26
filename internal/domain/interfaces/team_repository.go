@@ -1,7 +1,7 @@
 package interfaces
 
 import (
-	"AvitoTech/internal/domain/dto"
+	"pr-service/internal/domain/dto"
 	"context"
 )
 

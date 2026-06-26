@@ -6,14 +6,14 @@ COPY . .
 
 RUN go mod download
 
-RUN go build -o /app/avitoTech ./cmd/server
+RUN go build -o /app/server ./cmd/server
 
 FROM alpine:3.19
 
 WORKDIR /app
 
-COPY --from=builder /app/avitoTech /app/avitoTech
+COPY --from=builder /app/server /app/server
 
 EXPOSE 8080
 
-CMD ["/app/avitoTech"]
+CMD ["/app/server"]

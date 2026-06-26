@@ -34,6 +34,16 @@ func ValidateUserID(userID string) error {
 	return nil
 }
 
+func ValidatePullRequestID(prID string) error {
+	if prID == "" {
+		return errors.New("pull_request_id cannot be empty")
+	}
+	if len(prID) > 100 {
+		return errors.New("pull_request_id too long (max 100 characters)")
+	}
+	return nil
+}
+
 func ValidateUsername(username string) error {
 	if username == "" {
 		return errors.New("username cannot be empty")
