@@ -1,12 +1,12 @@
 package handlers
 
 import (
+	"errors"
+	"net/http"
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/teams"
 	"pr-service/pkg/logger"
-	"encoding/json"
-	"errors"
-	"net/http"
+	"pr-service/pkg/validator"
 
 	"go.uber.org/zap"
 )
@@ -21,7 +21,7 @@ func NewTeamHandler(service *teams.Service) *TeamHandler {
 
 func (h *TeamHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	var req dto.TeamDTO
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeRequest(w, r, &req); err != nil {
 		logger.Log.Warn("Неверный формат запроса создания команды", zap.Error(err))
 		writeError(w, http.StatusBadRequest, teams.BadRequest, "invalid request body")
 		return
@@ -34,6 +34,8 @@ func (h *TeamHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.service.CreateTeam(r.Context(), req); err != nil {
 		switch {
+		case errors.Is(err, validator.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, teams.ErrTeamExists):
 			logger.Log.Warn("Команда уже существует", zap.String("team_name", req.TeamName))
 			writeError(w, http.StatusBadRequest, teams.TeamExistsCode, "team_name already exists")
@@ -65,6 +67,8 @@ func (h *TeamHandler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	t, err := h.service.GetTeam(r.Context(), teamName)
 	if err != nil {
 		switch {
+		case errors.Is(err, validator.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, teams.ErrTeamNotFound):
 			logger.Log.Warn("Команда не найдена", zap.String("team_name", teamName))
 			writeError(w, http.StatusNotFound, teams.TeamNotFound, "resource not found")

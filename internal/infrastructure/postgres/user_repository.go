@@ -1,14 +1,14 @@
 package postgres
 
 import (
-	"pr-service/internal/domain/dto"
-	"pr-service/internal/domain/user"
 	"context"
 	"errors"
 	"fmt"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/user"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -17,15 +17,21 @@ const (
 		FROM pull_requests pr
 		JOIN pr_reviewers prr ON pr.pull_request_id = prr.pull_request_id
 		WHERE prr.reviewer_id = $1
-		ORDER BY pr.created_at DESC
+		ORDER BY pr.created_at DESC, pr.pull_request_id
 	`
-	setUserActiveQuery = `UPDATE users SET is_active = $2 WHERE user_id = $1`
-	getUserQuery       = `SELECT user_id, username, team_name, is_active FROM users WHERE user_id = $1`
-	getTeamByNameQuery = `SELECT user_id, username, is_active FROM users WHERE team_name = $1`
+	setUserActiveQuery = `UPDATE users SET is_active = $2 WHERE user_id = $1 RETURNING user_id, username, COALESCE(team_name, ''), is_active`
+	getUserQuery       = `SELECT user_id, username, COALESCE(team_name, ''), COALESCE(is_active, false) FROM users WHERE user_id = $1`
+	getTeamByNameQuery = `SELECT user_id, username, COALESCE(is_active, false) FROM users WHERE team_name = $1 ORDER BY user_id`
 )
 
+type queryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
 type UserRepo struct {
-	db *pgxpool.Pool
+	db queryer
 }
 
 func NewUserRepo(db *Postgres) *UserRepo {
@@ -55,15 +61,15 @@ func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.Pul
 }
 
 func (r *UserRepo) SetUserActive(ctx context.Context, userID string, isActive bool) (*dto.UserDTO, error) {
-	result, err := r.db.Exec(ctx, setUserActiveQuery, userID, isActive)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при обновлении статуса пользователя: %w", err)
-	}
-	if result.RowsAffected() == 0 {
+	var u dto.UserDTO
+	err := r.db.QueryRow(ctx, setUserActiveQuery, userID, isActive).Scan(&u.UserID, &u.Username, &u.TeamName, &u.IsActive)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, user.ErrUserNotFound
 	}
-
-	return r.GetUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("update user activity: %w", err)
+	}
+	return &u, nil
 }
 
 func (r *UserRepo) GetUser(ctx context.Context, userID string) (*dto.UserDTO, error) {
@@ -85,7 +91,7 @@ func (r *UserRepo) GetTeamByName(ctx context.Context, teamName string) (*dto.Tea
 	}
 	defer rows.Close()
 
-	var members []dto.TeamMemberDTO
+	members := []dto.TeamMemberDTO{}
 	for rows.Next() {
 		var member dto.TeamMemberDTO
 		if err := rows.Scan(&member.UserID, &member.Username, &member.IsActive); err != nil {

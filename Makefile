@@ -1,41 +1,49 @@
-.PHONY: help build up down restart logs clean lint
+COMPOSE ?= $(shell if docker compose version >/dev/null 2>&1; then echo 'docker compose'; else echo 'docker-compose'; fi)
+GOLANGCI_LINT ?= golangci-lint
 
-help: ## Показать помощь
+.PHONY: help build up down restart logs clean test test-race test-e2e lint
+
+help:
 	@echo "Доступные команды:"
-	@echo "  make build    - Собрать Docker образы"
-	@echo "  make up       - Запустить сервис"
-	@echo "  make down     - Остановить сервис"
-	@echo "  make restart  - Перезапустить сервис"
-	@echo "  make logs     - Показать логи"
-	@echo "  make clean    - Остановить и удалить volumes"
-	@echo "  make lint     - Запустить линтер (golangci-lint)"
+	@echo "  make build     - Собрать Docker образы"
+	@echo "  make up        - Собрать и запустить сервис"
+	@echo "  make down      - Остановить сервис"
+	@echo "  make restart   - Перезапустить сервис"
+	@echo "  make logs      - Показать логи"
+	@echo "  make clean     - Остановить сервис и удалить данные БД"
+	@echo "  make test      - Запустить тесты"
+	@echo "  make test-race - Запустить тесты с детектором гонок"
+	@echo "  make test-e2e  - Проверить запущенный API (PR_SERVICE_E2E_URL)"
+	@echo "  make lint      - Проверить код и форматирование (golangci-lint v2)"
 
-build: ## Собрать Docker образы
-	docker-compose build
+build:
+	$(COMPOSE) build
 
-up: ## Запустить сервис
-	docker-compose up -d
+up:
+	$(COMPOSE) up -d --build
 
-down: ## Остановить сервис
-	docker-compose down
+down:
+	$(COMPOSE) down
 
-restart: ## Перезапустить сервис
-	docker-compose down
-	docker-compose up -d
+restart:
+	$(COMPOSE) restart
 
-logs: ## Показать логи
-	docker-compose logs -f
+logs:
+	$(COMPOSE) logs -f
 
-clean: ## Остановить и удалить volumes
-	docker-compose down -v
+clean:
+	$(COMPOSE) down -v
 
-lint: ## Запустить линтер
-	@echo "Running go vet..."
-	go vet ./...
-	@echo "Running gofmt..."
-	gofmt -w .
-	@echo "Running staticcheck..."
-	@which staticcheck > /dev/null || go install honnef.co/go/tools/cmd/staticcheck@latest
-	$(shell go env GOPATH)/bin/staticcheck ./...
-	@echo "✓ All checks passed!"
+test:
+	go test ./...
 
+test-race:
+	go test -race ./...
+
+test-e2e:
+	@test -n "$(PR_SERVICE_E2E_URL)" || (echo 'Укажите PR_SERVICE_E2E_URL для тестового API'; exit 1)
+	go test -race -count=1 -v ./tests/e2e
+
+lint:
+	$(GOLANGCI_LINT) run ./...
+	$(GOLANGCI_LINT) fmt --diff

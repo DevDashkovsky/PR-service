@@ -2,12 +2,16 @@ openapi: 3.0.3
 info:
   title: PR Reviewer Assignment Service (Test Task, Fall 2025)
   version: "1.0.0"
+  description: >-
+    POST принимает один JSON-объект размером до 1 MiB, без неизвестных полей.
+    Обязательные boolean не допускают null. Идентификаторы и имена не допускают
+    пустую строку, только пробелы и символ NUL. Длина строк считается в Unicode-символах.
+    Неизвестный user_id в getReview возвращает 200 с пустым массивом.
 
 tags:
   - name: Teams
   - name: Users
   - name: PullRequests
-  - name: Health
 
 components:
   parameters:
@@ -17,6 +21,9 @@ components:
       required: true
       schema:
         type: string
+        minLength: 1
+        maxLength: 100
+        pattern: '^[a-zA-Z0-9_-]+$'
       description: Уникальное имя команды
     UserIdQuery:
       name: user_id
@@ -24,6 +31,8 @@ components:
       required: true
       schema:
         type: string
+        minLength: 1
+        maxLength: 100
       description: Идентификатор пользователя
   schemas:
     ErrorResponse:
@@ -43,6 +52,8 @@ components:
                 - NOT_ASSIGNED
                 - NO_CANDIDATE
                 - NOT_FOUND
+                - BAD_REQUEST
+                - INTERNAL_ERROR
             message:
               type: string
       example:
@@ -55,8 +66,12 @@ components:
       properties:
         user_id:
           type: string
+          minLength: 1
+          maxLength: 100
         username:
           type: string
+          minLength: 1
+          maxLength: 255
         is_active:
           type: boolean
     Team:
@@ -65,8 +80,14 @@ components:
       properties:
         team_name:
           type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^[a-zA-Z0-9_-]+$'
         members:
           type: array
+          minItems: 0
+          maxItems: 200
+          description: Обязательный массив; user_id внутри команды должны быть уникальны.
           items:
             $ref: '#/components/schemas/TeamMember'
     User:
@@ -75,10 +96,17 @@ components:
       properties:
         user_id:
           type: string
+          minLength: 1
+          maxLength: 100
         username:
           type: string
+          minLength: 1
+          maxLength: 255
         team_name:
           type: string
+          minLength: 0
+          maxLength: 100
+          pattern: '^[a-zA-Z0-9_-]*$'
         is_active:
           type: boolean
     PullRequest:
@@ -87,15 +115,23 @@ components:
       properties:
         pull_request_id:
           type: string
+          minLength: 1
+          maxLength: 100
         pull_request_name:
           type: string
+          minLength: 1
+          maxLength: 255
         author_id:
           type: string
+          minLength: 1
+          maxLength: 100
         status:
           type: string
           enum: [OPEN, MERGED]
         assigned_reviewers:
           type: array
+          maxItems: 2
+          uniqueItems: true
           items:
             type: string
           description: user_id назначенных ревьюверов (0..2)
@@ -113,10 +149,16 @@ components:
       properties:
         pull_request_id:
           type: string
+          minLength: 1
+          maxLength: 100
         pull_request_name:
           type: string
+          minLength: 1
+          maxLength: 255
         author_id:
           type: string
+          minLength: 1
+          maxLength: 100
         status:
           type: string
           enum: [OPEN, MERGED]
@@ -142,6 +184,11 @@ paths:
                   username: Bob
                   is_active: true
       responses:
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '201':
           description: Команда создана
           content:
@@ -162,7 +209,7 @@ paths:
                       username: Bob
                       is_active: true
         '400':
-          description: Команда уже существует
+          description: Команда уже существует (TEAM_EXISTS) или неверный запрос (BAD_REQUEST)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -178,6 +225,16 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TeamNameQuery'
       responses:
+        '400':
+          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Объект команды
           content:
@@ -213,12 +270,24 @@ paths:
               properties:
                 user_id:
                   type: string
+                  minLength: 1
+                  maxLength: 100
                 is_active:
                   type: boolean
             example:
               user_id: u2
               is_active: false
       responses:
+        '400':
+          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Обновлённый пользователь
           content:
@@ -252,14 +321,24 @@ paths:
               type: object
               required: [ pull_request_id, pull_request_name, author_id ]
               properties:
-                pull_request_id: { type: string }
-                pull_request_name: { type: string }
-                author_id: { type: string }
+                pull_request_id: { type: string, minLength: 1, maxLength: 100 }
+                pull_request_name: { type: string, minLength: 1, maxLength: 255 }
+                author_id: { type: string, minLength: 1, maxLength: 100 }
             example:
               pull_request_id: pr-1001
               pull_request_name: Add search
               author_id: u1
       responses:
+        '400':
+          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '201':
           description: PR создан
           content:
@@ -301,10 +380,20 @@ paths:
               type: object
               required: [ pull_request_id ]
               properties:
-                pull_request_id: { type: string }
+                pull_request_id: { type: string, minLength: 1, maxLength: 100 }
             example:
               pull_request_id: pr-1001
       responses:
+        '400':
+          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: PR в состоянии MERGED
           content:
@@ -340,12 +429,22 @@ paths:
               type: object
               required: [ pull_request_id, old_user_id ]
               properties:
-                pull_request_id: { type: string }
-                old_user_id: { type: string }
+                pull_request_id: { type: string, minLength: 1, maxLength: 100 }
+                old_user_id: { type: string, minLength: 1, maxLength: 100 }
             example:
               pull_request_id: pr-1001
-              old_reviewer_id: u2
+              old_user_id: u2
       responses:
+        '400':
+          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Переназначение выполнено
           content:
@@ -398,6 +497,16 @@ paths:
       parameters:
         - $ref: '#/components/parameters/UserIdQuery'
       responses:
+        '400':
+          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка (INTERNAL_ERROR)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Список PR'ов пользователя
           content:
@@ -408,6 +517,8 @@ paths:
                 properties:
                   user_id:
                     type: string
+                    minLength: 1
+                    maxLength: 100
                   pull_requests:
                     type: array
                     items:

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.idea
+.env
+.env.*
+.env.example
+REVIEW.md
+OBSERVABILITY.md
+README.md
+Makefile
+*_test.go
+.codex
+.agents
+server
+coverage.out
+*.test

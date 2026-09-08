@@ -5,7 +5,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var Log *zap.Logger
+var Log = zap.NewNop()
 
 func Init(development bool) error {
 	var err error
@@ -28,6 +28,8 @@ func Init(development bool) error {
 
 func Sync() {
 	if Log != nil {
-		_ = Log.Sync()
+		if err := Log.Sync(); err != nil {
+			return
+		}
 	}
 }

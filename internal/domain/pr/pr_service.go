@@ -1,17 +1,7 @@
 package pr
 
-import (
-	"pr-service/internal/domain/interfaces"
-)
+import "pr-service/internal/domain/interfaces"
 
-type Service struct {
-	prRepo   interfaces.PRRepository
-	userRepo interfaces.UserRepository
-}
+type Service struct{ prRepo interfaces.PRRepository }
 
-func NewService(prRepo interfaces.PRRepository, userRepo interfaces.UserRepository) *Service {
-	return &Service{
-		prRepo:   prRepo,
-		userRepo: userRepo,
-	}
-}
+func NewService(prRepo interfaces.PRRepository) *Service { return &Service{prRepo: prRepo} }

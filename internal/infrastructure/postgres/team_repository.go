@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/teams"
+	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,7 +20,7 @@ const (
 	teamExistQuery  = `SELECT EXISTS(SELECT 1 FROM teams WHERE team_name = $1)`
 	createTeamQuery = `INSERT INTO teams(team_name) VALUES ($1)`
 	getTeamQuery    = `SELECT team_name FROM teams WHERE team_name = $1`
-	getUsersQuery   = `SELECT user_id, username, is_active FROM users WHERE team_name = $1`
+	getUsersQuery   = `SELECT user_id, username, COALESCE(is_active, false) FROM users WHERE team_name = $1 ORDER BY user_id`
 	upsertUserQuery = `
   INSERT INTO users (user_id, username, team_name, is_active)
   VALUES ($1, $2, $3, $4)
@@ -51,7 +53,7 @@ func (r *TeamRepo) CreateTeam(ctx context.Context, team dto.TeamDTO) error {
 	if err != nil {
 		return fmt.Errorf("ошибка при начале транзакции: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(tx)
 
 	if _, err := tx.Exec(ctx, createTeamQuery, team.TeamName); err != nil {
 		var pgErr *pgconn.PgError
@@ -61,7 +63,9 @@ func (r *TeamRepo) CreateTeam(ctx context.Context, team dto.TeamDTO) error {
 		return fmt.Errorf("ошибка при создании команды: %w", err)
 	}
 
-	for _, member := range team.Members {
+	members := slices.Clone(team.Members)
+	slices.SortFunc(members, func(a, b dto.TeamMemberDTO) int { return strings.Compare(a.UserID, b.UserID) })
+	for _, member := range members {
 		if _, err := tx.Exec(ctx, upsertUserQuery,
 			member.UserID,
 			member.Username,
@@ -91,7 +95,7 @@ func (r *TeamRepo) GetTeam(ctx context.Context, name string) (dto.TeamDTO, error
 	}
 	defer rows.Close()
 
-	var members []dto.TeamMemberDTO
+	members := []dto.TeamMemberDTO{}
 	for rows.Next() {
 		var member dto.TeamMemberDTO
 		if err := rows.Scan(&member.UserID, &member.Username, &member.IsActive); err != nil {

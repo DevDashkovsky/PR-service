@@ -1,134 +1,79 @@
 package pr
 
 import (
-	"pr-service/internal/domain/dto"
-	"pr-service/internal/domain/user"
-	"pr-service/pkg/logger"
-	"pr-service/pkg/validator"
 	"context"
 	"errors"
-	"fmt"
-
-	"go.uber.org/zap"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/interfaces"
+	"pr-service/internal/domain/user"
+	"pr-service/pkg/validator"
+	"slices"
 )
 
 func (s *Service) ReassignReviewer(ctx context.Context, req dto.ReassignPullRequestRequest) (*dto.ReassignPullRequestResponse, error) {
 	if err := validator.ValidatePullRequestID(req.PullRequestID); err != nil {
-		return nil, fmt.Errorf("invalid pull_request_id: %w", err)
-	}
-	if err := validator.ValidateUserID(req.OldUserID); err != nil {
-		return nil, fmt.Errorf("invalid old_user_id: %w", err)
-	}
-
-	logger.Log.Info("Переназначение ревьювера",
-		zap.String("pr_id", req.PullRequestID),
-		zap.String("old_user_id", req.OldUserID),
-	)
-
-	pr, err := s.prRepo.GetPR(ctx, req.PullRequestID)
-	if err != nil {
-		if errors.Is(err, ErrPRNotFound) {
-			logger.Log.Warn("PR не найден", zap.String("pr_id", req.PullRequestID))
-			return nil, ErrPRNotFound
-		}
-		logger.Log.Error("Ошибка при получении PR", zap.String("pr_id", req.PullRequestID), zap.Error(err))
-		return nil, fmt.Errorf("ошибка при получении PR: %w", err)
-	}
-
-	if pr.Status == dto.StatusMerged {
-		logger.Log.Warn("Попытка переназначить ревьювера на смердженный PR",
-			zap.String("pr_id", req.PullRequestID),
-		)
-		return nil, ErrPRMerged
-	}
-
-	isAssigned, err := s.prRepo.IsReviewerAssigned(ctx, req.PullRequestID, req.OldUserID)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при проверке назначения: %w", err)
-	}
-	if !isAssigned {
-		logger.Log.Warn("Пользователь не назначен ревьювером на этот PR",
-			zap.String("pr_id", req.PullRequestID),
-			zap.String("user_id", req.OldUserID),
-		)
-		return nil, ErrNotAssigned
-	}
-
-	oldReviewer, err := s.userRepo.GetUser(ctx, req.OldUserID)
-	if err != nil {
-		if errors.Is(err, user.ErrUserNotFound) {
-			logger.Log.Warn("Старый ревьювер не найден", zap.String("user_id", req.OldUserID))
-			return nil, ErrNotAssigned
-		}
-		logger.Log.Error("Ошибка при получении ревьювера", zap.String("user_id", req.OldUserID), zap.Error(err))
-		return nil, fmt.Errorf("ошибка при получении ревьювера: %w", err)
-	}
-
-	if oldReviewer.TeamName == "" {
-		return nil, fmt.Errorf("old reviewer has no team")
-	}
-
-	newReviewer, err := s.findReplacementCandidate(ctx, oldReviewer.TeamName, pr.AuthorID, pr.AssignedReviewers, req.OldUserID)
-	if err != nil {
-		logger.Log.Warn("Не найден кандидат для замены",
-			zap.String("team_name", oldReviewer.TeamName),
-			zap.Error(err),
-		)
 		return nil, err
 	}
-
-	if err := s.prRepo.ReplaceReviewer(ctx, req.PullRequestID, req.OldUserID, newReviewer); err != nil {
-		logger.Log.Error("Ошибка при переназначении ревьювера", zap.Error(err))
-		return nil, fmt.Errorf("ошибка при переназначении ревьювера: %w", err)
+	if err := validator.ValidateUserID(req.OldUserID); err != nil {
+		return nil, err
 	}
-
-	logger.Log.Info("Ревьювер успешно переназначен",
-		zap.String("pr_id", req.PullRequestID),
-		zap.String("old_reviewer", req.OldUserID),
-		zap.String("new_reviewer", newReviewer),
-	)
-
-	updatedPR, err := s.prRepo.GetPR(ctx, req.PullRequestID)
+	var result *dto.ReassignPullRequestResponse
+	err := s.prRepo.WithinTransaction(ctx, func(tx interfaces.PRTransaction) error {
+		pullRequest, err := tx.GetPRForUpdate(ctx, req.PullRequestID)
+		if err != nil {
+			return err
+		}
+		if pullRequest.Status == dto.StatusMerged {
+			return ErrPRMerged
+		}
+		if !slices.Contains(pullRequest.AssignedReviewers, req.OldUserID) {
+			return ErrNotAssigned
+		}
+		oldReviewer, err := tx.GetUser(ctx, req.OldUserID)
+		if errors.Is(err, user.ErrUserNotFound) {
+			return ErrNotAssigned
+		}
+		if err != nil {
+			return err
+		}
+		if oldReviewer.TeamName == "" {
+			return ErrNoCandidate
+		}
+		team, err := tx.GetTeamForAssignment(ctx, oldReviewer.TeamName)
+		if err != nil {
+			return err
+		}
+		replacement, err := findReplacementCandidate(team.Members, pullRequest.AuthorID, pullRequest.AssignedReviewers, req.OldUserID)
+		if err != nil {
+			return err
+		}
+		if err := tx.ReplaceReviewer(ctx, req.PullRequestID, req.OldUserID, replacement); err != nil {
+			return err
+		}
+		for i, id := range pullRequest.AssignedReviewers {
+			if id == req.OldUserID {
+				pullRequest.AssignedReviewers[i] = replacement
+			}
+		}
+		slices.Sort(pullRequest.AssignedReviewers)
+		result = &dto.ReassignPullRequestResponse{PR: *pullRequest, ReplacedBy: replacement}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении обновленного PR: %w", err)
+		return nil, err
 	}
-
-	return &dto.ReassignPullRequestResponse{
-		PR: dto.PullRequestDTO{
-			PullRequestID:     updatedPR.PullRequestID,
-			PullRequestName:   updatedPR.PullRequestName,
-			AuthorID:          updatedPR.AuthorID,
-			Status:            updatedPR.Status,
-			AssignedReviewers: updatedPR.AssignedReviewers,
-		},
-		ReplacedBy: newReviewer,
-	}, nil
+	return result, nil
 }
 
-func (s *Service) findReplacementCandidate(ctx context.Context, teamName, authorID string, currentReviewers []string, oldReviewerID string) (string, error) {
-	team, err := s.userRepo.GetTeamByName(ctx, teamName)
-	if err != nil {
-		return "", fmt.Errorf("ошибка при получении команды: %w", err)
-	}
-
-	excludeMap := make(map[string]bool)
-	excludeMap[authorID] = true
-	excludeMap[oldReviewerID] = true
-	for _, reviewerID := range currentReviewers {
-		excludeMap[reviewerID] = true
-	}
-
-	var candidates []string
-	for _, member := range team.Members {
-		if member.IsActive && !excludeMap[member.UserID] {
+func findReplacementCandidate(members []dto.TeamMemberDTO, authorID string, currentReviewers []string, oldReviewerID string) (string, error) {
+	candidates := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.IsActive && member.UserID != authorID && member.UserID != oldReviewerID && !slices.Contains(currentReviewers, member.UserID) {
 			candidates = append(candidates, member.UserID)
 		}
 	}
-
 	if len(candidates) == 0 {
 		return "", ErrNoCandidate
 	}
-
-	selected := selectRandomReviewers(candidates, 1)
-	return selected[0], nil
+	return selectRandomReviewers(candidates, 1)[0], nil
 }

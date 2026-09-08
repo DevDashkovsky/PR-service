@@ -1,12 +1,12 @@
 package handlers
 
 import (
+	"errors"
+	"net/http"
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/pr"
 	"pr-service/pkg/logger"
-	"encoding/json"
-	"errors"
-	"net/http"
+	"pr-service/pkg/validator"
 
 	"go.uber.org/zap"
 )
@@ -21,7 +21,7 @@ func NewPRHandler(service *pr.Service) *PRHandler {
 
 func (h *PRHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	var req dto.CreatePullRequestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeRequest(w, r, &req); err != nil {
 		logger.Log.Warn("Неверный формат запроса создания PR", zap.Error(err))
 		writeError(w, http.StatusBadRequest, pr.BadRequest, "invalid request body")
 		return
@@ -35,6 +35,8 @@ func (h *PRHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	pullRequest, err := h.service.CreatePR(r.Context(), req)
 	if err != nil {
 		switch {
+		case errors.Is(err, validator.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, pr.ErrPRExists):
 			logger.Log.Warn("PR уже существует", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusConflict, pr.PRExists, "PR id already exists")
@@ -58,7 +60,7 @@ func (h *PRHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 
 func (h *PRHandler) MergePR(w http.ResponseWriter, r *http.Request) {
 	var req dto.MergePullRequestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeRequest(w, r, &req); err != nil {
 		logger.Log.Warn("Неверный формат запроса мерджа PR", zap.Error(err))
 		writeError(w, http.StatusBadRequest, pr.BadRequest, "invalid request body")
 		return
@@ -69,6 +71,8 @@ func (h *PRHandler) MergePR(w http.ResponseWriter, r *http.Request) {
 	mergedPR, err := h.service.MergePR(r.Context(), req)
 	if err != nil {
 		switch {
+		case errors.Is(err, validator.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, pr.ErrPRNotFound):
 			logger.Log.Warn("PR не найден", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusNotFound, pr.NotFound, "pull request not found")
@@ -89,7 +93,7 @@ func (h *PRHandler) MergePR(w http.ResponseWriter, r *http.Request) {
 
 func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 	var req dto.ReassignPullRequestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeRequest(w, r, &req); err != nil {
 		logger.Log.Warn("Неверный формат запроса переназначения", zap.Error(err))
 		writeError(w, http.StatusBadRequest, pr.BadRequest, "invalid request body")
 		return
@@ -103,6 +107,8 @@ func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 	response, err := h.service.ReassignReviewer(r.Context(), req)
 	if err != nil {
 		switch {
+		case errors.Is(err, validator.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, pr.ErrPRNotFound):
 			logger.Log.Warn("PR не найден", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusNotFound, pr.NotFound, "pull request not found")

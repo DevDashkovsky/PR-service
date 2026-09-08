@@ -1,8 +1,8 @@
 package interfaces
 
 import (
-	"pr-service/internal/domain/dto"
 	"context"
+	"pr-service/internal/domain/dto"
 )
 
 type UserRepository interface {

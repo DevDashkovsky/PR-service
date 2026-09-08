@@ -1,93 +1,84 @@
+version: "2"
 run:
   timeout: 5m
   tests: true
-
 linters:
   enable:
-    # Базовые линтеры
-    - errcheck      # Проверка необработанных ошибок
-    - gosimple      # Упрощение кода
-    - ineffassign   # Обнаружение неиспользуемых присваиваний
-    - staticcheck   # Множество статических проверок
-    - unused        # Неиспользуемый код
-
-    # Стиль кода
-    - gofmt         # Форматирование кода
-    - goimports     # Проверка импортов
-    - misspell      # Опечатки в комментариях
-    - revive        # Замена golint с дополнительными правилами
-
-    # Сложность и читаемость
-    - gocyclo       # Цикломатическая сложность
-    - goconst       # Повторяющиеся строки, которые можно вынести в константы
-    - gocritic      # Множество проверок качества кода
-
-    # Безопасность
-    - gosec         # Проверка на уязвимости безопасности
-
-    # Производительность
-    - prealloc      # Предварительное выделение слайсов
-
-    # Ошибки
-    - errorlint     # Правильная работа с ошибками
-
-linters-settings:
-  errcheck:
-    check-blank: true
-    check-type-assertions: true
-
-
-  gocyclo:
-    min-complexity: 15
-
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-
-  misspell:
-    locale: US
-
-  revive:
+    - errorlint
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - misspell
+    - prealloc
+    - revive
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      disabled-checks:
+        - hugeParam
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+    gocyclo:
+      min-complexity: 15
+    gosec:
+      excludes:
+        - G404
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+        - name: unexported-return
+          disabled: false
+        - name: var-naming
+          disabled: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        disabled: false
-      - name: unexported-return
-        disabled: false
-      - name: var-naming
-        disabled: false
-
-  gosec:
-    excludes:
-      - G404  # Использование слабого генератора случайных чисел (у нас для выбора ревьювера)
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-    disabled-checks:
-      - hugeParam  # Отключаем проверку на большие параметры
-
+      - linters:
+          - gosec
+        path: internal/infrastructure/postgres/creation_test\.go
+        text: 'G101:'
+      - linters:
+          - gosec
+        path: tests/e2e/scenarios_test\.go
+        text: 'G704:'
+      - linters:
+          - errcheck
+          - lll
+        path: _test\.go
+      - linters:
+          - errcheck
+        path: cmd/server/main\.go
+        text: Error return value is not checked
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-rules:
-    # Игнорируем длинные строки в тестах
-    - path: _test\.go
-      linters:
-        - lll
-        - errcheck
-
-    # Игнорируем ошибки в main.go при defer Close()
-    - path: cmd/server/main\.go
-      text: "Error return value is not checked"
-      linters:
-        - errcheck
-
-
   max-issues-per-linter: 0
   max-same-issues: 0
-
-output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

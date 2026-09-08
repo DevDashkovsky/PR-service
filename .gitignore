@@ -1,2 +1,6 @@
 .idea
 .env
+/server
+coverage.out
+*.test
+.DS_Store

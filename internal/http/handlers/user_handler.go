@@ -1,12 +1,12 @@
 package handlers
 
 import (
+	"errors"
+	"net/http"
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/user"
 	"pr-service/pkg/logger"
-	"encoding/json"
-	"errors"
-	"net/http"
+	"pr-service/pkg/validator"
 
 	"go.uber.org/zap"
 )
@@ -32,6 +32,10 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 
 	reviews, err := h.service.GetUserReviews(r.Context(), userID)
 	if err != nil {
+		if errors.Is(err, validator.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, user.BadRequest, err.Error())
+			return
+		}
 		logger.Log.Error("Ошибка получения PR пользователя",
 			zap.String("user_id", userID),
 			zap.Error(err),
@@ -53,7 +57,7 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	var req dto.SetUserActiveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeRequest(w, r, &req); err != nil {
 		logger.Log.Warn("Неверный формат запроса изменения активности", zap.Error(err))
 		writeError(w, http.StatusBadRequest, user.BadRequest, "invalid request body")
 		return
@@ -67,6 +71,8 @@ func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	u, err := h.service.SetUserActive(r.Context(), req.UserID, req.IsActive)
 	if err != nil {
 		switch {
+		case errors.Is(err, validator.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, user.ErrUserNotFound):
 			logger.Log.Warn("Пользователь не найден", zap.String("user_id", req.UserID))
 			writeError(w, http.StatusNotFound, user.UserNotFound, "user not found")

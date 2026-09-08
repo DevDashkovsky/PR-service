@@ -5,195 +5,157 @@ import (
 	"errors"
 	"fmt"
 	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/interfaces"
 	prdomain "pr-service/internal/domain/pr"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	prExistsQuery = `SELECT EXISTS(SELECT 1 FROM pull_requests WHERE pull_request_id = $1)`
+type PRRepo struct{ db *pgxpool.Pool }
+type prTransaction struct{ tx pgx.Tx }
 
-	createPRQuery = `
-		INSERT INTO pull_requests (pull_request_id, pull_request_name, author_id, status, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (pull_request_id) DO NOTHING
-	`
+func NewPRRepo(db *Postgres) *PRRepo { return &PRRepo{db: db.conn} }
 
-	getPRQuery = `
-		SELECT pull_request_id, pull_request_name, author_id, status, merged_at
-		FROM pull_requests
-		WHERE pull_request_id = $1
-	`
-
-	setMergedQuery = `
-		UPDATE pull_requests
-		SET status = 'MERGED', merged_at = $2
-		WHERE pull_request_id = $1
-	`
-
-	getReviewersQuery = `
-		SELECT reviewer_id
-		FROM pr_reviewers
-		WHERE pull_request_id = $1
-		ORDER BY assigned_at
-	`
-
-	assignReviewerQuery = `
-		INSERT INTO pr_reviewers (pull_request_id, reviewer_id)
-		VALUES ($1, $2)
-	`
-
-	removeReviewerQuery = `
-		DELETE FROM pr_reviewers
-		WHERE pull_request_id = $1 AND reviewer_id = $2
-	`
-
-	isReviewerAssignedQuery = `
-		SELECT EXISTS(
-			SELECT 1 FROM pr_reviewers
-			WHERE pull_request_id = $1 AND reviewer_id = $2
-		)
-	`
-)
-
-type PRRepo struct {
-	db *pgxpool.Pool
+func (r *PRRepo) WithinTransaction(ctx context.Context, fn func(interfaces.PRTransaction) error) error {
+	const maxAttempts = 3
+	var err error
+	for attempt := range maxAttempts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err = r.runTransaction(ctx, fn)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || (pgErr.Code != "40001" && pgErr.Code != "40P01") {
+			return err
+		}
+		if attempt < maxAttempts-1 {
+			timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("transaction retries exhausted: %w", err)
 }
 
-func NewPRRepo(db *Postgres) *PRRepo {
-	return &PRRepo{db: db.conn}
+func (r *PRRepo) runTransaction(ctx context.Context, fn func(interfaces.PRTransaction) error) error {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if err := fn(&prTransaction{tx: tx}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-func (r *PRRepo) PRExists(ctx context.Context, prID string) (bool, error) {
+func (r *prTransaction) PRExists(ctx context.Context, id string) (bool, error) {
 	var exists bool
-	err := r.db.QueryRow(ctx, prExistsQuery, prID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("ошибка при проверке существования PR: %w", err)
-	}
-	return exists, nil
+	err := r.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pull_requests WHERE pull_request_id=$1)`, id).Scan(&exists)
+	return exists, err
 }
 
-func (r *PRRepo) CreatePRWithReviewers(ctx context.Context, prID, prName, authorID string, reviewerIDs []string) error {
-	tx, err := r.db.Begin(ctx)
+func (r *prTransaction) CreatePRWithReviewers(ctx context.Context, id, name, author string, reviewers []string) error {
+	result, err := r.tx.Exec(ctx, `INSERT INTO pull_requests(pull_request_id,pull_request_name,author_id,status,created_at) VALUES($1,$2,$3,'OPEN',$4) ON CONFLICT (pull_request_id) DO NOTHING`, id, name, author, time.Now().UTC())
 	if err != nil {
-		return fmt.Errorf("ошибка при начале транзакции: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	result, err := tx.Exec(ctx, createPRQuery, prID, prName, authorID, dto.StatusOpen, time.Now())
-	if err != nil {
-		return fmt.Errorf("ошибка при создании PR: %w", err)
+		return err
 	}
 	if result.RowsAffected() == 0 {
 		return prdomain.ErrPRExists
 	}
-
-	if len(reviewerIDs) > 0 {
-		batch := &pgx.Batch{}
-		for _, reviewerID := range reviewerIDs {
-			batch.Queue(assignReviewerQuery, prID, reviewerID)
+	for _, reviewer := range reviewers {
+		if _, err := r.tx.Exec(ctx, `INSERT INTO pr_reviewers(pull_request_id,reviewer_id) VALUES($1,$2)`, id, reviewer); err != nil {
+			return err
 		}
-		br := tx.SendBatch(ctx, batch)
-		for range reviewerIDs {
-			if _, err := br.Exec(); err != nil {
-				_ = br.Close()
-				return fmt.Errorf("ошибка при назначении ревьювера: %w", err)
-			}
-		}
-		if err := br.Close(); err != nil {
-			return fmt.Errorf("ошибка при назначении ревьюверов: %w", err)
-		}
-	}
-
-	return tx.Commit(ctx)
-}
-
-func (r *PRRepo) GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, error) {
-	var pr dto.PullRequestDTO
-	var mergedAt pgtype.Timestamptz
-	err := r.db.QueryRow(ctx, getPRQuery, prID).Scan(
-		&pr.PullRequestID,
-		&pr.PullRequestName,
-		&pr.AuthorID,
-		&pr.Status,
-		&mergedAt,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, prdomain.ErrPRNotFound
-		}
-		return nil, fmt.Errorf("ошибка при получении PR: %w", err)
-	}
-
-	if mergedAt.Valid {
-		s := mergedAt.Time.Format(time.RFC3339)
-		pr.MergedAt = &s
-	}
-
-	reviewers, err := r.GetReviewers(ctx, prID)
-	if err != nil {
-		return nil, err
-	}
-	pr.AssignedReviewers = reviewers
-
-	return &pr, nil
-}
-
-func (r *PRRepo) SetMerged(ctx context.Context, prID string, mergedAt time.Time) error {
-	_, err := r.db.Exec(ctx, setMergedQuery, prID, mergedAt)
-	if err != nil {
-		return fmt.Errorf("ошибка при мердже PR: %w", err)
 	}
 	return nil
 }
 
-func (r *PRRepo) GetReviewers(ctx context.Context, prID string) ([]string, error) {
-	rows, err := r.db.Query(ctx, getReviewersQuery, prID)
+func (r *prTransaction) GetPRForUpdate(ctx context.Context, id string) (*dto.PullRequestDTO, error) {
+	var result dto.PullRequestDTO
+	var merged pgtype.Timestamp
+	err := r.tx.QueryRow(ctx, `SELECT pull_request_id,pull_request_name,author_id,status,merged_at FROM pull_requests WHERE pull_request_id=$1 FOR UPDATE`, id).Scan(&result.PullRequestID, &result.PullRequestName, &result.AuthorID, &result.Status, &merged)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, prdomain.ErrPRNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении ревьюверов: %w", err)
+		return nil, err
+	}
+	if merged.Valid {
+		value := merged.Time.UTC().Format(time.RFC3339Nano)
+		result.MergedAt = &value
+	}
+	rows, err := r.tx.Query(ctx, `SELECT reviewer_id FROM pr_reviewers WHERE pull_request_id=$1 ORDER BY reviewer_id COLLATE "C"`, id)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
-
-	reviewers := []string{}
+	result.AssignedReviewers = []string{}
 	for rows.Next() {
-		var reviewerID string
-		if err := rows.Scan(&reviewerID); err != nil {
-			return nil, fmt.Errorf("ошибка при чтении ревьювера: %w", err)
+		var reviewer string
+		if err := rows.Scan(&reviewer); err != nil {
+			return nil, err
 		}
-		reviewers = append(reviewers, reviewerID)
+		result.AssignedReviewers = append(result.AssignedReviewers, reviewer)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при итерации ревьюверов: %w", err)
+		return nil, err
 	}
-
-	return reviewers, nil
+	return &result, nil
 }
 
-func (r *PRRepo) ReplaceReviewer(ctx context.Context, prID, oldReviewerID, newReviewerID string) error {
-	tx, err := r.db.Begin(ctx)
+func (r *prTransaction) SetMerged(ctx context.Context, id string, at time.Time) error {
+	result, err := r.tx.Exec(ctx, `UPDATE pull_requests SET status='MERGED',merged_at=$2 WHERE pull_request_id=$1 AND status='OPEN'`, id, at.UTC())
 	if err != nil {
-		return fmt.Errorf("ошибка при начале транзакции: %w", err)
+		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err = tx.Exec(ctx, removeReviewerQuery, prID, oldReviewerID); err != nil {
-		return fmt.Errorf("ошибка при удалении ревьювера: %w", err)
+	if result.RowsAffected() != 1 {
+		return prdomain.ErrPRMerged
 	}
-	if _, err = tx.Exec(ctx, assignReviewerQuery, prID, newReviewerID); err != nil {
-		return fmt.Errorf("ошибка при добавлении ревьювера: %w", err)
-	}
-
-	return tx.Commit(ctx)
+	return nil
 }
 
-func (r *PRRepo) IsReviewerAssigned(ctx context.Context, prID, reviewerID string) (bool, error) {
-	var exists bool
-	err := r.db.QueryRow(ctx, isReviewerAssignedQuery, prID, reviewerID).Scan(&exists)
+func (r *prTransaction) ReplaceReviewer(ctx context.Context, id, oldID, newID string) error {
+	result, err := r.tx.Exec(ctx, `DELETE FROM pr_reviewers WHERE pull_request_id=$1 AND reviewer_id=$2`, id, oldID)
 	if err != nil {
-		return false, fmt.Errorf("ошибка при проверке назначения ревьювера: %w", err)
+		return err
 	}
-	return exists, nil
+	if result.RowsAffected() != 1 {
+		return prdomain.ErrNotAssigned
+	}
+	_, err = r.tx.Exec(ctx, `INSERT INTO pr_reviewers(pull_request_id,reviewer_id) VALUES($1,$2)`, id, newID)
+	if err != nil {
+		return err
+	}
+	_, err = r.tx.Exec(ctx, `UPDATE pull_requests SET status=status WHERE pull_request_id=$1`, id)
+	return err
+}
+
+func (r *prTransaction) GetUser(ctx context.Context, id string) (*dto.UserDTO, error) {
+	return (&UserRepo{db: r.tx}).GetUser(ctx, id)
+}
+
+func (r *prTransaction) GetTeamForAssignment(ctx context.Context, name string) (*dto.TeamDTO, error) {
+	rows, err := r.tx.Query(ctx, `SELECT user_id,username,COALESCE(is_active,false) FROM users WHERE team_name=$1 ORDER BY user_id COLLATE "C" FOR SHARE`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := &dto.TeamDTO{TeamName: name, Members: []dto.TeamMemberDTO{}}
+	for rows.Next() {
+		var member dto.TeamMemberDTO
+		if err := rows.Scan(&member.UserID, &member.Username, &member.IsActive); err != nil {
+			return nil, err
+		}
+		result.Members = append(result.Members, member)
+	}
+	return result, rows.Err()
 }

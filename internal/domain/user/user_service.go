@@ -1,12 +1,12 @@
 package user
 
 import (
-	"pr-service/internal/domain/dto"
-	"pr-service/internal/domain/interfaces"
-	"pr-service/pkg/validator"
 	"context"
 	"errors"
 	"fmt"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/interfaces"
+	"pr-service/pkg/validator"
 )
 
 const (
@@ -28,6 +28,9 @@ func NewService(repo interfaces.UserRepository) *Service {
 }
 
 func (s *Service) GetUserReviews(ctx context.Context, userID string) ([]dto.PullRequestShortDTO, error) {
+	if err := validator.ValidateUserID(userID); err != nil {
+		return nil, err
+	}
 	reviews, err := s.repo.GetUserReviews(ctx, userID)
 	if err != nil {
 		return nil, err

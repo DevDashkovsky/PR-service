@@ -21,9 +21,16 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	isDev := os.Getenv("ENVIRONMENT") != "production"
 	if err := logger.Init(isDev); err != nil {
-		log.Fatal("Не удалось инициализировать логгер: ", err)
+		return err
 	}
 	defer logger.Sync()
 
@@ -34,9 +41,13 @@ func main() {
 
 	db, err := postgres.NewDB()
 	if err != nil {
-		logger.Log.Fatal("Ошибка подключения к базе данных", zap.Error(err))
+		return err
 	}
-	defer db.CloseDB()
+	defer func() {
+		if err := db.CloseDB(); err != nil {
+			logger.Log.Error("Ошибка закрытия БД", zap.Error(err))
+		}
+	}()
 
 	teamRepo := postgres.NewTeamRepo(db)
 	userRepo := postgres.NewUserRepo(db)
@@ -48,7 +59,7 @@ func main() {
 	userService := user.NewService(userRepo)
 	userHandler := handlers.NewUserHandler(userService)
 
-	prService := pr.NewService(prRepo, userRepo)
+	prService := pr.NewService(prRepo)
 	prHandler := handlers.NewPRHandler(prService)
 
 	router := http.NewRouter(teamHandler, userHandler, prHandler)
@@ -60,7 +71,6 @@ func main() {
 
 	server := http.NewServer(":"+port, router)
 
-	// Запускаем сервер в отдельной горутине, чтобы main мог ждать сигнал завершения.
 	serverErr := make(chan error, 1)
 	go func() {
 		logger.Log.Info("Запуск HTTP сервера", zap.String("port", port))
@@ -71,10 +81,11 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stop)
 
 	select {
 	case err := <-serverErr:
-		logger.Log.Fatal("Ошибка запуска сервера", zap.Error(err))
+		return err
 	case sig := <-stop:
 		logger.Log.Info("Получен сигнал завершения, останавливаем сервер", zap.String("signal", sig.String()))
 	}
@@ -83,8 +94,12 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Log.Error("Ошибка при остановке сервера", zap.Error(err))
+		if closeErr := server.Close(); closeErr != nil {
+			logger.Log.Error("Ошибка закрытия HTTP сервера", zap.Error(closeErr))
+		}
+		return err
 	} else {
 		logger.Log.Info("Сервер корректно остановлен")
 	}
+	return nil
 }

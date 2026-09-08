@@ -1,21 +1,21 @@
 package interfaces
 
 import (
-	"pr-service/internal/domain/dto"
 	"context"
+	"pr-service/internal/domain/dto"
 	"time"
 )
 
 type PRRepository interface {
-	PRExists(ctx context.Context, prID string) (bool, error)
+	WithinTransaction(context.Context, func(PRTransaction) error) error
+}
 
-	CreatePRWithReviewers(ctx context.Context, prID, prName, authorID string, reviewerIDs []string) error
-
-	GetPR(ctx context.Context, prID string) (*dto.PullRequestDTO, error)
-
-	SetMerged(ctx context.Context, prID string, mergedAt time.Time) error
-
-	GetReviewers(ctx context.Context, prID string) ([]string, error)
-	ReplaceReviewer(ctx context.Context, prID, oldReviewerID, newReviewerID string) error
-	IsReviewerAssigned(ctx context.Context, prID, reviewerID string) (bool, error)
+type PRTransaction interface {
+	PRExists(context.Context, string) (bool, error)
+	GetPRForUpdate(context.Context, string) (*dto.PullRequestDTO, error)
+	GetUser(context.Context, string) (*dto.UserDTO, error)
+	GetTeamForAssignment(context.Context, string) (*dto.TeamDTO, error)
+	CreatePRWithReviewers(context.Context, string, string, string, []string) error
+	SetMerged(context.Context, string, time.Time) error
+	ReplaceReviewer(context.Context, string, string, string) error
 }

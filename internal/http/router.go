@@ -16,6 +16,7 @@ func NewRouter(teamHandler *handlers.TeamHandler, userHandler *handlers.UserHand
 
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestSize(maxRequestBody))
+	r.Use(middleware.Timeout(25 * time.Second))
 
 	r.Route("/team", func(r chi.Router) {
 		r.Post("/add", teamHandler.CreateTeam)

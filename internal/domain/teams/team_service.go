@@ -1,12 +1,12 @@
 package teams
 
 import (
-	"pr-service/internal/domain/dto"
-	"pr-service/internal/domain/interfaces"
-	"pr-service/pkg/validator"
 	"context"
 	"errors"
 	"fmt"
+	"pr-service/internal/domain/dto"
+	"pr-service/internal/domain/interfaces"
+	"pr-service/pkg/validator"
 )
 
 const (
@@ -35,12 +35,12 @@ func (s *Service) CreateTeam(ctx context.Context, req dto.TeamDTO) error {
 		return fmt.Errorf("invalid team_name: %w", err)
 	}
 
-	if len(req.Members) == 0 {
-		return errors.New("members list cannot be empty")
+	if req.Members == nil {
+		return fmt.Errorf("%w: members must be an array", validator.ErrInvalidInput)
 	}
 
 	if len(req.Members) > 200 {
-		return errors.New("too many members (max 200)")
+		return fmt.Errorf("%w: too many members (max 200)", validator.ErrInvalidInput)
 	}
 
 	userIDs := make([]string, 0, len(req.Members))
@@ -75,5 +75,8 @@ func (s *Service) CreateTeam(ctx context.Context, req dto.TeamDTO) error {
 }
 
 func (s *Service) GetTeam(ctx context.Context, teamName string) (dto.TeamDTO, error) {
+	if err := validator.ValidateTeamName(teamName); err != nil {
+		return dto.TeamDTO{}, err
+	}
 	return s.teams.GetTeam(ctx, teamName)
 }
