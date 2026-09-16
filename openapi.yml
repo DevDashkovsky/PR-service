@@ -9,6 +9,7 @@ info:
     Неизвестный user_id в getReview возвращает 200 с пустым массивом.
 
 tags:
+  - name: Health
   - name: Teams
   - name: Users
   - name: PullRequests
@@ -19,28 +20,54 @@ components:
       name: team_name
       in: query
       required: true
+      description: Уникальное имя команды
       schema:
         type: string
         minLength: 1
         maxLength: 100
         pattern: '^[a-zA-Z0-9_-]+$'
-      description: Уникальное имя команды
     UserIdQuery:
       name: user_id
       in: query
       required: true
+      description: Идентификатор пользователя; строка только из пробелов и U+0000 запрещены.
       schema:
         type: string
         minLength: 1
         maxLength: 100
-      description: Идентификатор пользователя
+        pattern: '^(?!\s*$)[^\u0000]+$'
+    ReviewsLimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: Максимальное число PR в странице.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    ReviewsCursorQuery:
+      name: cursor
+      in: query
+      required: false
+      description: >-
+        Непрозрачный курсор следующей страницы из поля next_cursor предыдущего ответа.
+        Клиент не должен разбирать или изменять его содержимое.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+        pattern: '^[A-Za-z0-9_-]+$'
+
   schemas:
     ErrorResponse:
       type: object
+      additionalProperties: false
       required: [error]
       properties:
         error:
           type: object
+          additionalProperties: false
           required: [code, message]
           properties:
             code:
@@ -52,7 +79,10 @@ components:
                 - NOT_ASSIGNED
                 - NO_CANDIDATE
                 - NOT_FOUND
+                - METHOD_NOT_ALLOWED
                 - BAD_REQUEST
+                - GATEWAY_TIMEOUT
+                - SERVICE_UNAVAILABLE
                 - INTERNAL_ERROR
             message:
               type: string
@@ -60,23 +90,38 @@ components:
         error:
           code: NOT_FOUND
           message: resource not found
+
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
     TeamMember:
       type: object
-      required: [ user_id, username, is_active ]
+      additionalProperties: false
+      required: [user_id, username, is_active]
       properties:
         user_id:
           type: string
           minLength: 1
           maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
         username:
           type: string
           minLength: 1
           maxLength: 255
+          pattern: '^(?!\s*$)[^\u0000]+$'
         is_active:
           type: boolean
+
     Team:
       type: object
-      required: [ team_name, members]
+      additionalProperties: false
+      required: [team_name, members]
       properties:
         team_name:
           type: string
@@ -90,18 +135,22 @@ components:
           description: Обязательный массив; user_id внутри команды должны быть уникальны.
           items:
             $ref: '#/components/schemas/TeamMember'
+
     User:
       type: object
-      required: [ user_id, username, team_name, is_active ]
+      additionalProperties: false
+      required: [user_id, username, team_name, is_active]
       properties:
         user_id:
           type: string
           minLength: 1
           maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
         username:
           type: string
           minLength: 1
           maxLength: 255
+          pattern: '^(?!\s*$)[^\u0000]+$'
         team_name:
           type: string
           minLength: 0
@@ -109,22 +158,27 @@ components:
           pattern: '^[a-zA-Z0-9_-]*$'
         is_active:
           type: boolean
+
     PullRequest:
       type: object
-      required: [ pull_request_id, pull_request_name, author_id, status, assigned_reviewers]
+      additionalProperties: false
+      required: [pull_request_id, pull_request_name, author_id, status, assigned_reviewers]
       properties:
         pull_request_id:
           type: string
           minLength: 1
           maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
         pull_request_name:
           type: string
           minLength: 1
           maxLength: 255
+          pattern: '^(?!\s*$)[^\u0000]+$'
         author_id:
           type: string
           minLength: 1
           maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
         status:
           type: string
           enum: [OPEN, MERGED]
@@ -132,9 +186,12 @@ components:
           type: array
           maxItems: 2
           uniqueItems: true
+          description: user_id назначенных ревьюверов (0..2)
           items:
             type: string
-          description: user_id назначенных ревьюверов (0..2)
+            minLength: 1
+            maxLength: 100
+            pattern: '^(?!\s*$)[^\u0000]+$'
         createdAt:
           type: string
           format: date-time
@@ -143,30 +200,228 @@ components:
           type: string
           format: date-time
           nullable: true
+
     PullRequestShort:
       type: object
-      required: [ pull_request_id, pull_request_name, author_id, status]
+      additionalProperties: false
+      required: [pull_request_id, pull_request_name, author_id, status]
       properties:
         pull_request_id:
           type: string
           minLength: 1
           maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
         pull_request_name:
           type: string
           minLength: 1
           maxLength: 255
+          pattern: '^(?!\s*$)[^\u0000]+$'
         author_id:
           type: string
           minLength: 1
           maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
         status:
           type: string
           enum: [OPEN, MERGED]
 
+    SetUserActiveRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, is_active]
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+        is_active:
+          type: boolean
+
+    CreatePullRequestRequest:
+      type: object
+      additionalProperties: false
+      required: [pull_request_id, pull_request_name, author_id]
+      properties:
+        pull_request_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+        pull_request_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^(?!\s*$)[^\u0000]+$'
+        author_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+
+    MergePullRequestRequest:
+      type: object
+      additionalProperties: false
+      required: [pull_request_id]
+      properties:
+        pull_request_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+
+    ReassignPullRequestRequest:
+      type: object
+      additionalProperties: false
+      required: [pull_request_id, old_user_id]
+      properties:
+        pull_request_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+        old_user_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+
+    TeamResponse:
+      type: object
+      additionalProperties: false
+      required: [team]
+      properties:
+        team:
+          $ref: '#/components/schemas/Team'
+
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+
+    PullRequestResponse:
+      type: object
+      additionalProperties: false
+      required: [pr]
+      properties:
+        pr:
+          $ref: '#/components/schemas/PullRequest'
+
+    ReassignPullRequestResponse:
+      type: object
+      additionalProperties: false
+      required: [pr, replaced_by]
+      properties:
+        pr:
+          $ref: '#/components/schemas/PullRequest'
+        replaced_by:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+          description: user_id нового ревьювера
+
+    UserReviewsResponse:
+      type: object
+      additionalProperties: false
+      required: [user_id, pull_requests]
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '^(?!\s*$)[^\u0000]+$'
+        pull_requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PullRequestShort'
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: >-
+            Непрозрачный курсор следующей страницы. Поле отсутствует, если следующей
+            страницы нет.
+
+  responses:
+    BadRequest:
+      description: Тело или query-параметры запроса не прошли проверку (BAD_REQUEST)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Запрошенный ресурс не найден (NOT_FOUND)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MethodNotAllowed:
+      description: HTTP-метод не поддерживается для этого пути (METHOD_NOT_ALLOWED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    GatewayTimeout:
+      description: Операция не завершилась до истечения серверного дедлайна (GATEWAY_TIMEOUT)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Сервис временно не готов обслуживать запросы (SERVICE_UNAVAILABLE)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Внутренняя ошибка (INTERNAL_ERROR)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
 paths:
+  /healthz:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Проверить, что процесс сервиса запущен
+      responses:
+        '200':
+          description: Процесс работает
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+
+  /readyz:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Проверить готовность сервиса и базы данных
+      responses:
+        '200':
+          description: Сервис готов принимать запросы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /team/add:
     post:
       tags: [Teams]
+      operationId: createTeam
       summary: Создать команду с участниками (создаёт/обновляет пользователей)
       requestBody:
         required: true
@@ -184,20 +439,12 @@ paths:
                   username: Bob
                   is_active: true
       responses:
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '201':
           description: Команда создана
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  team:
-                    $ref: '#/components/schemas/Team'
+                $ref: '#/components/schemas/TeamResponse'
               example:
                 team:
                   team_name: backend
@@ -212,29 +459,27 @@ paths:
           description: Команда уже существует (TEAM_EXISTS) или неверный запрос (BAD_REQUEST)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
               example:
                 error:
                   code: TEAM_EXISTS
                   message: team_name already exists
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /team/get:
     get:
       tags: [Teams]
+      operationId: getTeam
       summary: Получить команду с участниками
       parameters:
         - $ref: '#/components/parameters/TeamNameQuery'
       responses:
-        '400':
-          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Объект команды
           content:
@@ -250,104 +495,81 @@ paths:
                   - user_id: u2
                     username: Bob
                     is_active: true
-        '404':
-          description: Команда не найдена
+        '400':
+          description: Параметр team_name отсутствует или не прошёл проверку (BAD_REQUEST)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /users/setIsActive:
     post:
       tags: [Users]
+      operationId: setUserActive
       summary: Установить флаг активности пользователя
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [ user_id, is_active ]
-              properties:
-                user_id:
-                  type: string
-                  minLength: 1
-                  maxLength: 100
-                is_active:
-                  type: boolean
+              $ref: '#/components/schemas/SetUserActiveRequest'
             example:
               user_id: u2
               is_active: false
       responses:
-        '400':
-          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Обновлённый пользователь
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  user:
-                    $ref: '#/components/schemas/User'
+                $ref: '#/components/schemas/UserResponse'
               example:
                 user:
                   user_id: u2
                   username: Bob
                   team_name: backend
                   is_active: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Пользователь не найден
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /pullRequest/create:
     post:
       tags: [PullRequests]
+      operationId: createPullRequest
       summary: Создать PR и автоматически назначить до 2 ревьюверов из команды автора
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [ pull_request_id, pull_request_name, author_id ]
-              properties:
-                pull_request_id: { type: string, minLength: 1, maxLength: 100 }
-                pull_request_name: { type: string, minLength: 1, maxLength: 255 }
-                author_id: { type: string, minLength: 1, maxLength: 100 }
+              $ref: '#/components/schemas/CreatePullRequestRequest'
             example:
               pull_request_id: pr-1001
               pull_request_name: Add search
               author_id: u1
       responses:
-        '400':
-          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '201':
           description: PR создан
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  pr:
-                    $ref: '#/components/schemas/PullRequest'
+                $ref: '#/components/schemas/PullRequestResponse'
               example:
                 pr:
                   pull_request_id: pr-1001
@@ -355,54 +577,51 @@ paths:
                   author_id: u1
                   status: OPEN
                   assigned_reviewers: [u2, u3]
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Автор/команда не найдены
+          description: Автор не найден или не состоит в команде (NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '409':
-          description: PR уже существует
+          description: PR уже существует (PR_EXISTS)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: { code: PR_EXISTS, message: PR id already exists }
+                error:
+                  code: PR_EXISTS
+                  message: PR id already exists
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /pullRequest/merge:
     post:
       tags: [PullRequests]
+      operationId: mergePullRequest
       summary: Пометить PR как MERGED (идемпотентная операция)
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [ pull_request_id ]
-              properties:
-                pull_request_id: { type: string, minLength: 1, maxLength: 100 }
+              $ref: '#/components/schemas/MergePullRequestRequest'
             example:
               pull_request_id: pr-1001
       responses:
-        '400':
-          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: PR в состоянии MERGED
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  pr:
-                    $ref: '#/components/schemas/PullRequest'
+                $ref: '#/components/schemas/PullRequestResponse'
               example:
                 pr:
                   pull_request_id: pr-1001
@@ -411,53 +630,42 @@ paths:
                   status: MERGED
                   assigned_reviewers: [u2, u3]
                   mergedAt: 2025-10-24T12:34:56Z
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: PR не найден
+          description: PR не найден (NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /pullRequest/reassign:
     post:
       tags: [PullRequests]
+      operationId: reassignPullRequestReviewer
       summary: Переназначить конкретного ревьювера на другого из его команды
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [ pull_request_id, old_user_id ]
-              properties:
-                pull_request_id: { type: string, minLength: 1, maxLength: 100 }
-                old_user_id: { type: string, minLength: 1, maxLength: 100 }
+              $ref: '#/components/schemas/ReassignPullRequestRequest'
             example:
               pull_request_id: pr-1001
               old_user_id: u2
       responses:
-        '400':
-          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Переназначение выполнено
           content:
             application/json:
               schema:
-                type: object
-                required: [pr, replaced_by]
-                properties:
-                  pr:
-                    $ref: '#/components/schemas/PullRequest'
-                  replaced_by:
-                    type: string
-                    description: user_id нового ревьювера
+                $ref: '#/components/schemas/ReassignPullRequestResponse'
               example:
                 pr:
                   pull_request_id: pr-1001
@@ -466,63 +674,65 @@ paths:
                   status: OPEN
                   assigned_reviewers: [u3, u5]
                 replaced_by: u5
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: PR или пользователь не найден
+          description: PR не найден (NOT_FOUND)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '409':
           description: Нарушение доменных правил переназначения
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
               examples:
                 merged:
                   summary: Нельзя менять после MERGED
                   value:
-                    error: { code: PR_MERGED, message: cannot reassign on merged PR }
+                    error:
+                      code: PR_MERGED
+                      message: cannot reassign on merged PR
                 notAssigned:
                   summary: Пользователь не был назначен ревьювером
                   value:
-                    error: { code: NOT_ASSIGNED, message: reviewer is not assigned to this PR }
+                    error:
+                      code: NOT_ASSIGNED
+                      message: reviewer is not assigned to this PR
                 noCandidate:
                   summary: Нет доступных кандидатов
                   value:
-                    error: { code: NO_CANDIDATE, message: no active replacement candidate in teams }
+                    error:
+                      code: NO_CANDIDATE
+                      message: no active replacement candidate in team
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
   /users/getReview:
     get:
       tags: [Users]
-      summary: Получить PR'ы, где пользователь назначен ревьювером
+      operationId: listUserReviewPullRequests
+      summary: Получить PR, где пользователь назначен ревьювером
+      description: >-
+        Результаты отсортированы по времени создания и идентификатору PR в убывающем
+        порядке. Неизвестный user_id возвращает 200 с пустым массивом.
       parameters:
         - $ref: '#/components/parameters/UserIdQuery'
+        - $ref: '#/components/parameters/ReviewsLimitQuery'
+        - $ref: '#/components/parameters/ReviewsCursorQuery'
       responses:
-        '400':
-          description: Неверный JSON, отсутствующее поле, превышен лимит 1 MiB или нарушены ограничения (BAD_REQUEST)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '500':
-          description: Внутренняя ошибка (INTERNAL_ERROR)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
-          description: Список PR'ов пользователя
+          description: Страница PR пользователя
           content:
             application/json:
               schema:
-                type: object
-                required: [ user_id, pull_requests ]
-                properties:
-                  user_id:
-                    type: string
-                    minLength: 1
-                    maxLength: 100
-                  pull_requests:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/PullRequestShort'
+                $ref: '#/components/schemas/UserReviewsResponse'
               example:
                 user_id: u2
                 pull_requests:
@@ -530,3 +740,18 @@ paths:
                     pull_request_name: Add search
                     author_id: u1
                     status: OPEN
+                next_cursor: eyJjcmVhdGVkX2F0IjoiMjAyNS0xMC0yNFQxMjozNDo1NloiLCJwdWxsX3JlcXVlc3RfaWQiOiJwci0xMDAxIn0
+        '400':
+          description: >-
+            user_id отсутствует или не прошёл проверку, limit вне диапазона 1..100
+            либо cursor имеет неверный формат (BAD_REQUEST)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
