@@ -65,15 +65,24 @@ func (r *TeamRepo) CreateTeam(ctx context.Context, team dto.TeamDTO) error {
 
 	members := slices.Clone(team.Members)
 	slices.SortFunc(members, func(a, b dto.TeamMemberDTO) int { return strings.Compare(a.UserID, b.UserID) })
+	batch := &pgx.Batch{}
 	for _, member := range members {
-		if _, err := tx.Exec(ctx, upsertUserQuery,
+		batch.Queue(upsertUserQuery,
 			member.UserID,
 			member.Username,
 			team.TeamName,
 			member.IsActive,
-		); err != nil {
+		)
+	}
+	results := tx.SendBatch(ctx, batch)
+	for _, member := range members {
+		if _, err := results.Exec(); err != nil {
+			_ = results.Close()
 			return fmt.Errorf("ошибка при добавлении пользователя %s: %w", member.UserID, err)
 		}
+	}
+	if err := results.Close(); err != nil {
+		return fmt.Errorf("ошибка при добавлении участников команды: %w", err)
 	}
 
 	return tx.Commit(ctx)
