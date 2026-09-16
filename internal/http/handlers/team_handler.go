@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"pr-service/internal/domain/dto"
@@ -11,11 +12,16 @@ import (
 	"go.uber.org/zap"
 )
 
-type TeamHandler struct {
-	service *teams.Service
+type teamService interface {
+	CreateTeam(context.Context, dto.TeamDTO) error
+	GetTeam(context.Context, string) (dto.TeamDTO, error)
 }
 
-func NewTeamHandler(service *teams.Service) *TeamHandler {
+type TeamHandler struct {
+	service teamService
+}
+
+func NewTeamHandler(service teamService) *TeamHandler {
 	return &TeamHandler{service: service}
 }
 
@@ -40,6 +46,9 @@ func (h *TeamHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Команда уже существует", zap.String("team_name", req.TeamName))
 			writeError(w, http.StatusBadRequest, teams.TeamExistsCode, "team_name already exists")
 		default:
+			if writeContextError(w, err) {
+				return
+			}
 			logger.Log.Error("Ошибка при создании команды",
 				zap.String("team_name", req.TeamName),
 				zap.Error(err),
@@ -73,6 +82,9 @@ func (h *TeamHandler) GetTeam(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Команда не найдена", zap.String("team_name", teamName))
 			writeError(w, http.StatusNotFound, teams.TeamNotFound, "resource not found")
 		default:
+			if writeContextError(w, err) {
+				return
+			}
 			logger.Log.Error("Ошибка при получении команды", zap.String("team_name", teamName), zap.Error(err))
 			writeError(w, http.StatusInternalServerError, teams.InternalError, "internal server error")
 		}

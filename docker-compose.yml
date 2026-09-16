@@ -9,7 +9,6 @@ services:
       POSTGRES_DB: ${DB_NAME:-prservice}
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     networks:
@@ -30,6 +29,7 @@ services:
       DB_USER: ${DB_USER:-pruser}
       DB_PASSWORD: ${DB_PASSWORD:-change_me}
       DB_NAME: ${DB_NAME:-prservice}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       PORT: "8080"
     depends_on:
@@ -40,6 +40,12 @@ services:
     networks:
       - app-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
 volumes:
   db_data:

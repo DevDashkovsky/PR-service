@@ -13,7 +13,7 @@ import (
 
 func TestInvalidRequests(t *testing.T) {
 	prHandler := NewPRHandler(pr.NewService(nil))
-	teamHandler := NewTeamHandler(teams.NewService(nil, nil))
+	teamHandler := NewTeamHandler(teams.NewService(nil))
 	userHandler := NewUserHandler(user.NewService(nil))
 	for _, tc := range []struct {
 		name, body string

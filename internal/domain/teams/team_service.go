@@ -23,11 +23,10 @@ var (
 
 type Service struct {
 	teams interfaces.TeamRepository
-	users interfaces.UserRepository
 }
 
-func NewService(t interfaces.TeamRepository, u interfaces.UserRepository) *Service {
-	return &Service{teams: t, users: u}
+func NewService(t interfaces.TeamRepository) *Service {
+	return &Service{teams: t}
 }
 
 func (s *Service) CreateTeam(ctx context.Context, req dto.TeamDTO) error {

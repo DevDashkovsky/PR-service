@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"pr-service/internal/domain/dto"
@@ -11,11 +12,17 @@ import (
 	"go.uber.org/zap"
 )
 
-type PRHandler struct {
-	service *pr.Service
+type pullRequestService interface {
+	CreatePR(context.Context, dto.CreatePullRequestRequest) (*dto.PullRequestDTO, error)
+	MergePR(context.Context, dto.MergePullRequestRequest) (*dto.MergedPullRequestDTO, error)
+	ReassignReviewer(context.Context, dto.ReassignPullRequestRequest) (*dto.ReassignPullRequestResponse, error)
 }
 
-func NewPRHandler(service *pr.Service) *PRHandler {
+type PRHandler struct {
+	service pullRequestService
+}
+
+func NewPRHandler(service pullRequestService) *PRHandler {
 	return &PRHandler{service: service}
 }
 
@@ -44,6 +51,9 @@ func (h *PRHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Автор не найден или без команды", zap.String("author_id", req.AuthorID))
 			writeError(w, http.StatusNotFound, pr.NotFound, "author not found")
 		default:
+			if writeContextError(w, err) {
+				return
+			}
 			logger.Log.Error("Ошибка при создании PR", zap.Error(err))
 			writeError(w, http.StatusInternalServerError, pr.InternalError, "internal server error")
 		}
@@ -77,6 +87,9 @@ func (h *PRHandler) MergePR(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("PR не найден", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusNotFound, pr.NotFound, "pull request not found")
 		default:
+			if writeContextError(w, err) {
+				return
+			}
 			logger.Log.Error("Ошибка при мердже PR", zap.Error(err))
 			writeError(w, http.StatusInternalServerError, pr.InternalError, "internal server error")
 		}
@@ -125,6 +138,9 @@ func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Нет кандидатов для замены", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusConflict, pr.NoCandidate, "no active replacement candidate in team")
 		default:
+			if writeContextError(w, err) {
+				return
+			}
 			logger.Log.Error("Ошибка при переназначении ревьювера", zap.Error(err))
 			writeError(w, http.StatusInternalServerError, pr.InternalError, "internal server error")
 		}

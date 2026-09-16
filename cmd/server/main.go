@@ -39,7 +39,10 @@ func run() error {
 		zap.String("version", "1.0.0"),
 	)
 
-	db, err := postgres.NewDB()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	db, err := postgres.NewDBWithContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -48,12 +51,15 @@ func run() error {
 			logger.Log.Error("Ошибка закрытия БД", zap.Error(err))
 		}
 	}()
+	if err := db.RunMigrations(ctx); err != nil {
+		return err
+	}
 
 	teamRepo := postgres.NewTeamRepo(db)
 	userRepo := postgres.NewUserRepo(db)
 	prRepo := postgres.NewPRRepo(db)
 
-	teamService := teams.NewService(teamRepo, userRepo)
+	teamService := teams.NewService(teamRepo)
 	teamHandler := handlers.NewTeamHandler(teamService)
 
 	userService := user.NewService(userRepo)
@@ -62,7 +68,7 @@ func run() error {
 	prService := pr.NewService(prRepo)
 	prHandler := handlers.NewPRHandler(prService)
 
-	router := http.NewRouter(teamHandler, userHandler, prHandler)
+	router := http.NewRouter(teamHandler, userHandler, prHandler, db)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -79,21 +85,17 @@ func run() error {
 		}
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(stop)
-
 	select {
 	case err := <-serverErr:
 		return err
-	case sig := <-stop:
-		logger.Log.Info("Получен сигнал завершения, останавливаем сервер", zap.String("signal", sig.String()))
+	case <-ctx.Done():
+		logger.Log.Info("Получен сигнал завершения, останавливаем сервер")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		if closeErr := server.Close(); closeErr != nil {
 			logger.Log.Error("Ошибка закрытия HTTP сервера", zap.Error(closeErr))
 		}
