@@ -1,5 +1,7 @@
 package dto
 
+import "time"
+
 const (
 	StatusOpen   = "OPEN"
 	StatusMerged = "MERGED"
@@ -55,6 +57,22 @@ type SetUserActiveRequest struct {
 type GetUserReviewsResponse struct {
 	UserID       string                `json:"user_id"`
 	PullRequests []PullRequestShortDTO `json:"pull_requests"`
+	NextCursor   string                `json:"next_cursor,omitempty"`
+}
+
+type UserReviewsCursor struct {
+	CreatedAt     time.Time
+	PullRequestID string
+}
+
+type UserReviewsPageRequest struct {
+	Limit  int
+	Cursor *UserReviewsCursor
+}
+
+type UserReviewsPage struct {
+	PullRequests []PullRequestShortDTO
+	NextCursor   *UserReviewsCursor
 }
 
 type PullRequestDTO struct {

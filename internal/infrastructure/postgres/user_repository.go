@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/user"
 
@@ -13,15 +15,27 @@ import (
 
 const (
 	getUserReviewsQuery = `
-		SELECT pr.pull_request_id, pr.pull_request_name, pr.author_id, pr.status
+		SELECT pr.pull_request_id, pr.pull_request_name, pr.author_id, pr.status, pr.created_at
 		FROM pull_requests pr
 		JOIN pr_reviewers prr ON pr.pull_request_id = prr.pull_request_id
 		WHERE prr.reviewer_id = $1
-		ORDER BY pr.created_at DESC, pr.pull_request_id
+		ORDER BY pr.created_at DESC, pr.pull_request_id COLLATE "C" DESC
+		LIMIT $2
+	`
+	getUserReviewsAfterQuery = `
+		SELECT pr.pull_request_id, pr.pull_request_name, pr.author_id, pr.status, pr.created_at
+		FROM pull_requests pr
+		JOIN pr_reviewers prr ON pr.pull_request_id = prr.pull_request_id
+		WHERE prr.reviewer_id = $1
+			AND (
+				pr.created_at < $2
+				OR (pr.created_at = $2 AND pr.pull_request_id COLLATE "C" < $3)
+			)
+		ORDER BY pr.created_at DESC, pr.pull_request_id COLLATE "C" DESC
+		LIMIT $4
 	`
 	setUserActiveQuery = `UPDATE users SET is_active = $2 WHERE user_id = $1 RETURNING user_id, username, COALESCE(team_name, ''), is_active`
 	getUserQuery       = `SELECT user_id, username, COALESCE(team_name, ''), COALESCE(is_active, false) FROM users WHERE user_id = $1`
-	getTeamByNameQuery = `SELECT user_id, username, COALESCE(is_active, false) FROM users WHERE team_name = $1 ORDER BY user_id`
 )
 
 type queryer interface {
@@ -38,26 +52,59 @@ func NewUserRepo(db *Postgres) *UserRepo {
 	return &UserRepo{db: db.conn}
 }
 
-func (r *UserRepo) GetUserReviews(ctx context.Context, userID string) ([]dto.PullRequestShortDTO, error) {
-	rows, err := r.db.Query(ctx, getUserReviewsQuery, userID)
+func (r *UserRepo) GetUserReviews(
+	ctx context.Context,
+	userID string,
+	page dto.UserReviewsPageRequest,
+) (dto.UserReviewsPage, error) {
+	query := getUserReviewsQuery
+	args := []any{userID, page.Limit + 1}
+	if page.Cursor != nil {
+		query = getUserReviewsAfterQuery
+		args = []any{userID, page.Cursor.CreatedAt, page.Cursor.PullRequestID, page.Limit + 1}
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении ревью пользователя: %w", err)
+		return dto.UserReviewsPage{}, fmt.Errorf("ошибка при получении ревью пользователя: %w", err)
 	}
 	defer rows.Close()
 
-	reviews := []dto.PullRequestShortDTO{}
+	reviews := make([]dto.PullRequestShortDTO, 0, page.Limit)
+	var boundary dto.UserReviewsCursor
+	hasMore := false
 	for rows.Next() {
 		var review dto.PullRequestShortDTO
-		if err := rows.Scan(&review.PullRequestID, &review.PullRequestName, &review.AuthorID, &review.Status); err != nil {
-			return nil, fmt.Errorf("ошибка при чтении ревью: %w", err)
+		var createdAt time.Time
+		if err := rows.Scan(
+			&review.PullRequestID,
+			&review.PullRequestName,
+			&review.AuthorID,
+			&review.Status,
+			&createdAt,
+		); err != nil {
+			return dto.UserReviewsPage{}, fmt.Errorf("ошибка при чтении ревью: %w", err)
+		}
+		if len(reviews) == page.Limit {
+			hasMore = true
+			continue
 		}
 		reviews = append(reviews, review)
+		boundary = dto.UserReviewsCursor{
+			CreatedAt:     createdAt,
+			PullRequestID: review.PullRequestID,
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при итерации ревью: %w", err)
+		return dto.UserReviewsPage{}, fmt.Errorf("ошибка при итерации ревью: %w", err)
 	}
 
-	return reviews, nil
+	result := dto.UserReviewsPage{PullRequests: reviews}
+	if hasMore {
+		result.NextCursor = &boundary
+	}
+
+	return result, nil
 }
 
 func (r *UserRepo) SetUserActive(ctx context.Context, userID string, isActive bool) (*dto.UserDTO, error) {
@@ -82,29 +129,4 @@ func (r *UserRepo) GetUser(ctx context.Context, userID string) (*dto.UserDTO, er
 		return nil, fmt.Errorf("ошибка при получении пользователя: %w", err)
 	}
 	return &u, nil
-}
-
-func (r *UserRepo) GetTeamByName(ctx context.Context, teamName string) (*dto.TeamDTO, error) {
-	rows, err := r.db.Query(ctx, getTeamByNameQuery, teamName)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка при получении команды: %w", err)
-	}
-	defer rows.Close()
-
-	members := []dto.TeamMemberDTO{}
-	for rows.Next() {
-		var member dto.TeamMemberDTO
-		if err := rows.Scan(&member.UserID, &member.Username, &member.IsActive); err != nil {
-			return nil, fmt.Errorf("ошибка при чтении участника команды: %w", err)
-		}
-		members = append(members, member)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при итерации участников команды: %w", err)
-	}
-
-	return &dto.TeamDTO{
-		TeamName: teamName,
-		Members:  members,
-	}, nil
 }

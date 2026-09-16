@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"pr-service/internal/domain/dto"
@@ -11,11 +12,16 @@ import (
 	"go.uber.org/zap"
 )
 
-type UserHandler struct {
-	service *user.Service
+type userService interface {
+	GetUserReviews(context.Context, string, string, string) (*dto.GetUserReviewsResponse, error)
+	SetUserActive(context.Context, string, bool) (*dto.UserDTO, error)
 }
 
-func NewUserHandler(service *user.Service) *UserHandler {
+type UserHandler struct {
+	service userService
+}
+
+func NewUserHandler(service userService) *UserHandler {
 	return &UserHandler{service: service}
 }
 
@@ -30,10 +36,18 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 
 	logger.Log.Info("Получение PR пользователя", zap.String("user_id", userID))
 
-	reviews, err := h.service.GetUserReviews(r.Context(), userID)
+	response, err := h.service.GetUserReviews(
+		r.Context(),
+		userID,
+		r.URL.Query().Get("limit"),
+		r.URL.Query().Get("cursor"),
+	)
 	if err != nil {
 		if errors.Is(err, validator.ErrInvalidInput) {
 			writeError(w, http.StatusBadRequest, user.BadRequest, err.Error())
+			return
+		}
+		if writeContextError(w, err) {
 			return
 		}
 		logger.Log.Error("Ошибка получения PR пользователя",
@@ -46,13 +60,10 @@ func (h *UserHandler) GetUserReviews(w http.ResponseWriter, r *http.Request) {
 
 	logger.Log.Info("PR пользователя успешно получены",
 		zap.String("user_id", userID),
-		zap.Int("pr_count", len(reviews)),
+		zap.Int("pr_count", len(response.PullRequests)),
 	)
 
-	writeJSON(w, http.StatusOK, dto.GetUserReviewsResponse{
-		UserID:       userID,
-		PullRequests: reviews,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +88,9 @@ func (h *UserHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Пользователь не найден", zap.String("user_id", req.UserID))
 			writeError(w, http.StatusNotFound, user.UserNotFound, "user not found")
 		default:
+			if writeContextError(w, err) {
+				return
+			}
 			logger.Log.Error("Ошибка изменения активности пользователя",
 				zap.String("user_id", req.UserID),
 				zap.Error(err),
