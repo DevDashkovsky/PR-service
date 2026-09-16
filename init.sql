@@ -32,3 +32,4 @@ CREATE INDEX IF NOT EXISTS idx_pr_reviewers_pr_id ON pr_reviewers(pull_request_i
 CREATE INDEX IF NOT EXISTS idx_pr_reviewers_reviewer_id ON pr_reviewers(reviewer_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_status ON pull_requests(status);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_review_page ON pull_requests(created_at DESC, pull_request_id COLLATE "C" DESC);
