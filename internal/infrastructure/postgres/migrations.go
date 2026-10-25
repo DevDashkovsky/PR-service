@@ -2,13 +2,13 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"fmt"
 	"io/fs"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	gooselock "github.com/pressly/goose/v3/lock"
 )
@@ -17,10 +17,12 @@ import (
 var migrations embed.FS
 
 func (db *Postgres) RunMigrations(ctx context.Context) error {
-	sqlDB, err := sql.Open("pgx", db.dsn)
+	config, err := pgxpool.ParseConfig(db.dsn)
 	if err != nil {
-		return fmt.Errorf("open database for migrations: %w", err)
+		return fmt.Errorf("parse database configuration for migrations: %w", err)
 	}
+	// Pool settings must not be sent to PostgreSQL as session parameters.
+	sqlDB := stdlib.OpenDB(*config.ConnConfig)
 	defer func() { _ = sqlDB.Close() }()
 
 	migrationFS, err := fs.Sub(migrations, "migrations")

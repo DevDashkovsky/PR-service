@@ -13,8 +13,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//nolint:gocyclo // The integration setup intentionally verifies every migration boundary.
 func TestRunMigrationsAdoptsExistingSchema(t *testing.T) {
+	t.Run("plain connection", func(t *testing.T) {
+		testRunMigrationsAdoptsExistingSchema(t, false)
+	})
+	t.Run("connection with pool settings", func(t *testing.T) {
+		testRunMigrationsAdoptsExistingSchema(t, true)
+	})
+}
+
+//nolint:gocyclo // The integration setup intentionally verifies every migration boundary.
+func testRunMigrationsAdoptsExistingSchema(t *testing.T, poolSettings bool) {
+	t.Helper()
 	dsn := os.Getenv("PR_SERVICE_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set PR_SERVICE_TEST_DATABASE_URL to run real PostgreSQL tests")
@@ -47,18 +57,21 @@ func TestRunMigrationsAdoptsExistingSchema(t *testing.T) {
 	}
 	query := parsedDSN.Query()
 	query.Set("search_path", schema)
+	if poolSettings {
+		query.Set("pool_max_conns", "2")
+		query.Set("pool_max_conn_lifetime", "5m")
+		query.Set("pool_health_check_period", "30s")
+	}
 	parsedDSN.RawQuery = query.Encode()
 	scopedDSN := parsedDSN.String()
 
-	config, err := pgxpool.ParseConfig(scopedDSN)
+	t.Setenv("DATABASE_URL", scopedDSN)
+	db, err := NewDBWithContext(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	defer func() { _ = db.CloseDB() }()
+	pool := db.conn
 
 	ddl, err := os.ReadFile(filepath.Join("..", "..", "..", "init.sql"))
 	if err != nil {
@@ -71,7 +84,6 @@ func TestRunMigrationsAdoptsExistingSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db := &Postgres{dsn: scopedDSN}
 	if err := db.RunMigrations(ctx); err != nil {
 		t.Fatal(err)
 	}
