@@ -37,13 +37,14 @@ func (r *handlerUserRepository) GetTeamByName(context.Context, string) (*dto.Tea
 	return nil, nil
 }
 
-func TestUserHandler_GetUserReviews_InvalidPagination(t *testing.T) {
+func TestUserHandler_GetUserReviews_InvalidInput(t *testing.T) {
 	t.Parallel()
 
 	handler := NewUserHandler(user.NewService(nil))
 	for _, target := range []string{
 		"/users/getReview?user_id=reviewer&limit=0",
 		"/users/getReview?user_id=reviewer&cursor=invalid!",
+		"/users/getReview?user_id=%FF",
 	} {
 		target := target
 		t.Run(target, func(t *testing.T) {

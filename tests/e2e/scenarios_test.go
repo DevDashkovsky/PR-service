@@ -282,6 +282,7 @@ func (e *apiSuite) notFound(t *testing.T) {
 }
 
 func (e *apiSuite) strictJSONValidation(t *testing.T) {
+	check(t, e.call(http.MethodGet, "/users/getReview?user_id=%FF", nil), http.StatusBadRequest, "BAD_REQUEST")
 	id := e.prefix + "-unknown-field"
 	check(t, e.call(http.MethodPost, "/pullRequest/create", map[string]any{
 		prIDKey:     id,

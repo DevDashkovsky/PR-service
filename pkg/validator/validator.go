@@ -29,6 +29,9 @@ func ValidateTeamName(teamName string) error {
 }
 
 func ValidateUserID(userID string) error {
+	if !utf8.ValidString(userID) {
+		return invalid("user_id must be valid UTF-8")
+	}
 	if strings.TrimSpace(userID) == "" || strings.ContainsRune(userID, 0) {
 		return invalid("user_id cannot be empty")
 	}
@@ -39,6 +42,9 @@ func ValidateUserID(userID string) error {
 }
 
 func ValidatePullRequestID(prID string) error {
+	if !utf8.ValidString(prID) {
+		return invalid("pull_request_id must be valid UTF-8")
+	}
 	if strings.TrimSpace(prID) == "" || strings.ContainsRune(prID, 0) {
 		return invalid("pull_request_id cannot be empty")
 	}
@@ -49,6 +55,9 @@ func ValidatePullRequestID(prID string) error {
 }
 
 func ValidateUsername(username string) error {
+	if !utf8.ValidString(username) {
+		return invalid("username must be valid UTF-8")
+	}
 	if username == "" || strings.ContainsRune(username, 0) {
 		return invalid("username cannot be empty")
 	}

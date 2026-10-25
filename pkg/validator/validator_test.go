@@ -1,6 +1,31 @@
 package validator
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+func TestTextValidatorsRequireUTF8(t *testing.T) {
+	validators := map[string]func(string) error{
+		"user ID":  ValidateUserID,
+		"PR ID":    ValidatePullRequestID,
+		"username": ValidateUsername,
+	}
+	for name, validate := range validators {
+		t.Run(name, func(t *testing.T) {
+			for _, value := range []string{"\xff", "prefix\xc3", "\xc0\xaf", "\xed\xa0\x80"} {
+				if err := validate(value); !errors.Is(err, ErrInvalidInput) {
+					t.Errorf("invalid UTF-8 %q: got %v, want ErrInvalidInput", value, err)
+				}
+			}
+			for _, value := range []string{"user-1", "Пользователь", "用户", "�"} {
+				if err := validate(value); err != nil {
+					t.Errorf("valid UTF-8 %q rejected: %v", value, err)
+				}
+			}
+		})
+	}
+}
 
 func TestValidateTeamName(t *testing.T) {
 	tests := []struct {
