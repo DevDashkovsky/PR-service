@@ -30,6 +30,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-change_me}
       DB_NAME: ${DB_NAME:-prservice}
       DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DATABASE_URL: ${DATABASE_URL:-}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       PORT: "8080"
     depends_on:
