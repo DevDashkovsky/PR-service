@@ -51,7 +51,7 @@ func (h *PRHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Автор не найден или без команды", zap.String("author_id", req.AuthorID))
 			writeError(w, http.StatusNotFound, pr.NotFound, "author not found")
 		default:
-			if writeContextError(w, err) {
+			if writeContextError(w, err) || writeTransactionBusy(w, err) {
 				return
 			}
 			logger.Log.Error("Ошибка при создании PR", zap.Error(err))
@@ -87,7 +87,7 @@ func (h *PRHandler) MergePR(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("PR не найден", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusNotFound, pr.NotFound, "pull request not found")
 		default:
-			if writeContextError(w, err) {
+			if writeContextError(w, err) || writeTransactionBusy(w, err) {
 				return
 			}
 			logger.Log.Error("Ошибка при мердже PR", zap.Error(err))
@@ -138,7 +138,7 @@ func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 			logger.Log.Warn("Нет кандидатов для замены", zap.String("pr_id", req.PullRequestID))
 			writeError(w, http.StatusConflict, pr.NoCandidate, "no active replacement candidate in team")
 		default:
-			if writeContextError(w, err) {
+			if writeContextError(w, err) || writeTransactionBusy(w, err) {
 				return
 			}
 			logger.Log.Error("Ошибка при переназначении ревьювера", zap.Error(err))
@@ -153,4 +153,13 @@ func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 	)
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func writeTransactionBusy(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, pr.ErrTransactionBusy) {
+		return false
+	}
+	w.Header().Set("Retry-After", "1")
+	writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "transaction contention; retry later")
+	return true
 }

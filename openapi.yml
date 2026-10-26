@@ -378,6 +378,21 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    TransactionBusy:
+      description: >-
+        Конфликты транзакции сохраняются после повторов (SERVICE_UNAVAILABLE).
+        Операция откатилась; запрос можно повторить после Retry-After.
+      headers:
+        Retry-After:
+          description: Минимальная задержка перед повтором в секундах
+          schema:
+            type: integer
+            minimum: 1
+            example: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     InternalError:
       description: Внутренняя ошибка (INTERNAL_ERROR)
       content:
@@ -599,6 +614,8 @@ paths:
                   message: PR id already exists
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/TransactionBusy'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 
@@ -642,6 +659,8 @@ paths:
           $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/TransactionBusy'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 
@@ -711,6 +730,8 @@ paths:
                       message: no active replacement candidate in team
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/TransactionBusy'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
 

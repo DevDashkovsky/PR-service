@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/interfaces"
 	prdomain "pr-service/internal/domain/pr"
@@ -21,7 +22,7 @@ type prTransaction struct{ tx pgx.Tx }
 func NewPRRepo(db *Postgres) *PRRepo { return &PRRepo{db: db.conn} }
 
 func (r *PRRepo) WithinTransaction(ctx context.Context, fn func(interfaces.PRTransaction) error) error {
-	const maxAttempts = 3
+	const maxAttempts = 5
 	var err error
 	for attempt := range maxAttempts {
 		if err := ctx.Err(); err != nil {
@@ -33,7 +34,8 @@ func (r *PRRepo) WithinTransaction(ctx context.Context, fn func(interfaces.PRTra
 			return err
 		}
 		if attempt < maxAttempts-1 {
-			timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+			backoff := 10 * time.Millisecond << attempt
+			timer := time.NewTimer(backoff + time.Duration(rand.Int64N(int64(backoff))))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -42,7 +44,7 @@ func (r *PRRepo) WithinTransaction(ctx context.Context, fn func(interfaces.PRTra
 			}
 		}
 	}
-	return fmt.Errorf("transaction retries exhausted: %w", err)
+	return fmt.Errorf("%w: %w", prdomain.ErrTransactionBusy, err)
 }
 
 func (r *PRRepo) runTransaction(ctx context.Context, fn func(interfaces.PRTransaction) error) error {
