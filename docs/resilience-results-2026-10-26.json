@@ -1,0 +1,193 @@
+{
+  "date": "2026-10-26",
+  "tested_application_commit": "64f745d",
+  "environment": {
+    "os": "macOS arm64",
+    "go": "1.27.0",
+    "postgresql": "16.14",
+    "race_detector": true,
+    "pool_max_conns": 16,
+    "client_concurrency": 64,
+    "steady_duration_seconds": 30
+  },
+  "command": "python3 tests/stress/run.py --requests 1000 --concurrency 64 --duration 30",
+  "results": [
+    {
+      "name": "create distinct PRs",
+      "passed": true,
+      "requests": 1000,
+      "statuses": {
+        "201": 1000
+      },
+      "seconds": 0.309,
+      "rps": 3239.0,
+      "p50_ms": 12.97,
+      "p95_ms": 36.88,
+      "p99_ms": 53.05
+    },
+    {
+      "name": "read reviews",
+      "passed": true,
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "seconds": 0.217,
+      "rps": 4617.3,
+      "p50_ms": 9.95,
+      "p95_ms": 22.86,
+      "p99_ms": 29.84
+    },
+    {
+      "name": "merge distinct PRs",
+      "passed": true,
+      "requests": 1000,
+      "statuses": {
+        "200": 1000
+      },
+      "seconds": 0.202,
+      "rps": 4954.0,
+      "p50_ms": 9.14,
+      "p95_ms": 25.09,
+      "p99_ms": 33.39
+    },
+    {
+      "name": "concurrent duplicate create",
+      "passed": true,
+      "requests": 64,
+      "statuses": {
+        "409": 63,
+        "201": 1
+      },
+      "seconds": 0.02,
+      "rps": 3218.8,
+      "p50_ms": 2.81,
+      "p95_ms": 7.21,
+      "p99_ms": 17.95
+    },
+    {
+      "name": "exactly one duplicate create succeeds",
+      "passed": true
+    },
+    {
+      "name": "concurrent replacement of one reviewer",
+      "passed": true,
+      "requests": 64,
+      "statuses": {
+        "409": 63,
+        "200": 1
+      },
+      "seconds": 0.022,
+      "rps": 2906.4,
+      "p50_ms": 3.45,
+      "p95_ms": 8.16,
+      "p99_ms": 20.69
+    },
+    {
+      "name": "exactly one replacement succeeds",
+      "passed": true
+    },
+    {
+      "name": "concurrent idempotent merge",
+      "passed": true,
+      "requests": 64,
+      "statuses": {
+        "200": 64
+      },
+      "seconds": 0.019,
+      "rps": 3367.7,
+      "p50_ms": 3.74,
+      "p95_ms": 6.5,
+      "p99_ms": 16.1
+    },
+    {
+      "name": "merge timestamp remains stable",
+      "passed": true
+    },
+    {
+      "name": "sustained create/read/merge",
+      "passed": true,
+      "requests": 113721,
+      "statuses": {
+        "201": 37907,
+        "200": 75814
+      },
+      "seconds": 30.043,
+      "rps": 3785.3,
+      "p50_ms": 15.09,
+      "p95_ms": 27.77,
+      "p99_ms": 49.91
+    },
+    {
+      "name": "create while activity changes",
+      "passed": true,
+      "requests": 600,
+      "statuses": {
+        "201": 300,
+        "200": 300
+      },
+      "seconds": 0.264,
+      "rps": 2274.8,
+      "p50_ms": 7.18,
+      "p95_ms": 76.44,
+      "p99_ms": 106.04
+    },
+    {
+      "name": "contention response is explicitly retryable",
+      "passed": true,
+      "responses": 0
+    },
+    {
+      "name": "persistent assignment invariants",
+      "passed": true
+    },
+    {
+      "name": "database lock request deadline",
+      "passed": true,
+      "status": 504,
+      "body": {
+        "error": {
+          "code": "GATEWAY_TIMEOUT",
+          "message": "request deadline exceeded"
+        }
+      },
+      "seconds": 25.007
+    },
+    {
+      "name": "disconnect rolls back partial creation",
+      "passed": true,
+      "status": 500,
+      "rows": "0"
+    },
+    {
+      "name": "retry after rolled-back creation",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "database outage detection",
+      "passed": true,
+      "health": 200,
+      "ready": 503,
+      "read": 500,
+      "read_seconds": 0.002
+    },
+    {
+      "name": "recovery without API restart",
+      "passed": true,
+      "ready": 200,
+      "create": 201
+    },
+    {
+      "name": "graceful shutdown drains in-flight request",
+      "passed": true,
+      "status": 200,
+      "exit": 0,
+      "seconds": 1.181
+    },
+    {
+      "name": "race detector",
+      "passed": true
+    }
+  ]
+}
