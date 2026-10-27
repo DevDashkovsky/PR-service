@@ -111,6 +111,13 @@ func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, pr.BadRequest, "invalid request body")
 		return
 	}
+	if values := r.Header.Values("Idempotency-Key"); len(values) != 0 {
+		if len(values) != 1 || values[0] == "" {
+			writeError(w, http.StatusBadRequest, pr.BadRequest, "expected one non-empty Idempotency-Key")
+			return
+		}
+		req.IdempotencyKey = values[0]
+	}
 
 	logger.Log.Info("Запрос на переназначение ревьювера",
 		zap.String("pr_id", req.PullRequestID),
@@ -120,6 +127,8 @@ func (h *PRHandler) ReassignPR(w http.ResponseWriter, r *http.Request) {
 	response, err := h.service.ReassignReviewer(r.Context(), req)
 	if err != nil {
 		switch {
+		case errors.Is(err, pr.ErrIdempotencyConflict):
+			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "idempotency key was used for a different request")
 		case errors.Is(err, validator.ErrInvalidInput):
 			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, pr.ErrPRNotFound):

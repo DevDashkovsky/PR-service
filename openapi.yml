@@ -16,6 +16,21 @@ tags:
 
 components:
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Один ключ на логическую операцию reassign, общий для всех PR.
+        Тот же ключ с теми же pull_request_id и old_user_id возвращает исходный
+        успешный ответ без повторной замены. Другие параметры дают 409
+        IDEMPOTENCY_CONFLICT. Ключ чувствителен к регистру; пустой или повторяющийся
+        заголовок запрещён. Автоматического истечения срока хранения нет.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
     TeamNameQuery:
       name: team_name
       in: query
@@ -75,6 +90,7 @@ components:
               enum:
                 - TEAM_EXISTS
                 - PR_EXISTS
+                - IDEMPOTENCY_CONFLICT
                 - PR_MERGED
                 - NOT_ASSIGNED
                 - NO_CANDIDATE
@@ -669,6 +685,14 @@ paths:
       tags: [PullRequests]
       operationId: reassignPullRequestReviewer
       summary: Переназначить конкретного ревьювера на другого из его команды
+      description: >-
+        Для безопасного повтора после потери ответа передайте Idempotency-Key.
+        Ответ сохраняется атомарно с заменой и воспроизводится даже после
+        последующих переназначений или merge; он описывает исходную операцию,
+        а не текущее состояние PR. При откате ключ не закрепляется.
+        Без ключа запрос неидемпотентен. Новая операция требует нового ключа.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -680,7 +704,7 @@ paths:
               old_user_id: u2
       responses:
         '200':
-          description: Переназначение выполнено
+          description: Переназначение выполнено либо воспроизведён исходный успешный ответ
           content:
             application/json:
               schema:
@@ -704,12 +728,18 @@ paths:
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '409':
-          description: Нарушение доменных правил переназначения
+          description: Нарушение доменных правил переназначения или конфликт Idempotency-Key
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
+                idempotencyConflict:
+                  summary: Ключ уже использован для другого запроса
+                  value:
+                    error:
+                      code: IDEMPOTENCY_CONFLICT
+                      message: idempotency key was used for a different request
                 merged:
                   summary: Нельзя менять после MERGED
                   value:

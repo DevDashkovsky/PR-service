@@ -2,8 +2,22 @@ package validator
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestValidateIdempotencyKey(t *testing.T) {
+	for _, key := range []string{"", "operation:1-2_3.4", strings.Repeat("k", 128)} {
+		if err := ValidateIdempotencyKey(key); err != nil {
+			t.Errorf("valid key rejected: %v", err)
+		}
+	}
+	for _, key := range []string{" ", "a,b", "ключ", "a\x00b", strings.Repeat("k", 129)} {
+		if err := ValidateIdempotencyKey(key); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("invalid key accepted: %q", key)
+		}
+	}
+}
 
 func TestTextValidatorsRequireUTF8(t *testing.T) {
 	validators := map[string]func(string) error{

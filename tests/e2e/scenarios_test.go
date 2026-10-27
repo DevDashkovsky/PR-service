@@ -3,9 +3,12 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"slices"
@@ -42,6 +45,7 @@ type apiSuite struct {
 }
 
 const userIDKey = "user_id"
+const oldUserIDKey = "old_user_id"
 const prIDKey = "pull_request_id"
 const authorIDKey = "author_id"
 const isActiveKey = "is_active"
@@ -69,6 +73,7 @@ func TestAPIScenarios(t *testing.T) {
 	t.Run("set active updates team", e.setActive)
 	t.Run("not found responses", e.notFound)
 	t.Run("strict JSON validation", e.strictJSONValidation)
+	t.Run("idempotent reassignment survives ABA and merge", e.idempotentReassignment)
 	t.Run("candidate cardinalities and review pagination", e.assignmentEdges)
 	t.Run("concurrent create", e.concurrentCreate)
 	t.Run("concurrent replacement of same reviewer", e.concurrentReassign)
@@ -85,10 +90,14 @@ func (e *apiSuite) merge(id string) result {
 	return e.call(http.MethodPost, "/pullRequest/merge", map[string]any{prIDKey: id})
 }
 func (e *apiSuite) reassign(id, old string) result {
-	return e.call(http.MethodPost, "/pullRequest/reassign", map[string]any{prIDKey: id, "old_user_id": old})
+	return e.call(http.MethodPost, "/pullRequest/reassign", map[string]any{prIDKey: id, oldUserIDKey: old})
 }
 
 func (e *apiSuite) call(method, path string, payload any) result {
+	return e.callWithHeaders(method, path, payload, nil)
+}
+
+func (e *apiSuite) callWithHeaders(method, path string, payload any, headers map[string]string) result {
 	var raw []byte
 	var err error
 	if payload != nil {
@@ -104,6 +113,9 @@ func (e *apiSuite) call(method, path string, payload any) result {
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return result{err: err}
@@ -116,6 +128,105 @@ func (e *apiSuite) call(method, path string, payload any) result {
 	r := result{status: resp.StatusCode}
 	r.err = json.Unmarshal(body, &r.body)
 	return r
+}
+
+func (e *apiSuite) idempotentReassignment(t *testing.T) {
+	author, first, second := e.prefix+"-idem-author", e.prefix+"-idem-a", e.prefix+"-idem-b"
+	check(t, e.call(http.MethodPost, "/team/add", map[string]any{
+		teamNameKey: e.prefix + "-idem-team",
+		membersKey: []map[string]any{
+			{userIDKey: author, usernameKey: "Author", isActiveKey: true},
+			{userIDKey: first, usernameKey: "First", isActiveKey: true},
+			{userIDKey: second, usernameKey: "Second", isActiveKey: false},
+		},
+	}), http.StatusCreated, "")
+	id := e.prefix + "-idem-pr"
+	check(t, e.call(http.MethodPost, "/pullRequest/create", map[string]any{
+		prIDKey: id, prNameKey: "Idempotent reassignment", authorIDKey: author,
+	}), http.StatusCreated, "")
+	check(t, e.call(http.MethodPost, "/users/setIsActive", map[string]any{
+		userIDKey: second, isActiveKey: true,
+	}), http.StatusOK, "")
+	payload := map[string]any{prIDKey: id, oldUserIDKey: first}
+	headers := map[string]string{"Idempotency-Key": e.prefix + "-operation"}
+	original := e.reassignWithLostResponse(t, payload, headers)
+	check(t, original, http.StatusOK, "")
+	results := parallel(8, func(int) result {
+		return e.callWithHeaders(http.MethodPost, "/pullRequest/reassign", payload, headers)
+	})
+	for _, response := range results {
+		check(t, response, http.StatusOK, "")
+		assertSameReassignment(t, original, response)
+		if got := readPR(t, response).Reviewers; !slices.Equal(got, []string{second}) {
+			t.Fatalf("replacement=%v, want %s", got, second)
+		}
+	}
+	check(t, e.callWithHeaders(http.MethodPost, "/pullRequest/reassign", map[string]any{
+		prIDKey: id, oldUserIDKey: second,
+	}, headers), http.StatusConflict, "IDEMPOTENCY_CONFLICT")
+	check(t, e.callWithHeaders(http.MethodPost, "/pullRequest/reassign", map[string]any{
+		prIDKey: id + "-other", oldUserIDKey: first,
+	}, headers), http.StatusConflict, "IDEMPOTENCY_CONFLICT")
+	check(t, e.reassign(id, second), http.StatusOK, "") // B -> A without the original key.
+	replay := e.callWithHeaders(http.MethodPost, "/pullRequest/reassign", payload, headers)
+	check(t, replay, http.StatusOK, "")
+	assertSameReassignment(t, results[0], replay)
+	merged := e.merge(id)
+	check(t, merged, http.StatusOK, "")
+	if got := readPR(t, merged).Reviewers; !slices.Equal(got, []string{first}) {
+		t.Fatalf("retry changed current assignment: %v", got)
+	}
+	replay = e.callWithHeaders(http.MethodPost, "/pullRequest/reassign", payload, headers)
+	check(t, replay, http.StatusOK, "")
+	assertSameReassignment(t, results[0], replay)
+}
+
+func (e *apiSuite) reassignWithLostResponse(t *testing.T, payload any, headers map[string]string) result {
+	t.Helper()
+	target, err := url.Parse(e.base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := make(chan result, 1)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ModifyResponse = func(response *http.Response) error {
+		captured := result{status: response.StatusCode}
+		captured.err = json.NewDecoder(response.Body).Decode(&captured.body)
+		select {
+		case observed <- captured:
+		default:
+		}
+		return errors.New("injected loss after upstream response")
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_ = conn.Close()
+	}
+	server := httptest.NewServer(proxy)
+	defer server.Close()
+	viaProxy := *e
+	viaProxy.base = server.URL
+	if response := viaProxy.callWithHeaders(http.MethodPost, "/pullRequest/reassign", payload, headers); response.err == nil {
+		t.Fatal("client unexpectedly received the discarded response")
+	}
+	select {
+	case response := <-observed:
+		return response
+	default:
+		t.Fatal("proxy did not observe a committed API response")
+		return result{}
+	}
+}
+
+func assertSameReassignment(t *testing.T, want, got result) {
+	t.Helper()
+	if !bytes.Equal(want.body["pr"], got.body["pr"]) || !bytes.Equal(want.body["replaced_by"], got.body["replaced_by"]) {
+		t.Fatalf("reassignment response changed: %s -> %s", want.body, got.body)
+	}
 }
 func check(t *testing.T, r result, status int, code string) {
 	t.Helper()

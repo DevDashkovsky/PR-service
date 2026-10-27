@@ -11,6 +11,8 @@ type PRRepository interface {
 }
 
 type PRTransaction interface {
+	BeginReassignment(context.Context, string, string, string) (*dto.ReassignPullRequestResponse, error)
+	SaveReassignment(context.Context, string, *dto.ReassignPullRequestResponse) error
 	PRExists(context.Context, string) (bool, error)
 	GetPRForUpdate(context.Context, string) (*dto.PullRequestDTO, error)
 	GetUser(context.Context, string) (*dto.UserDTO, error)

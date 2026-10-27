@@ -104,4 +104,10 @@ func testRunMigrationsAdoptsExistingSchema(t *testing.T, poolSettings bool) {
 	if count == 0 {
 		t.Fatal("migration version was not recorded")
 	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pr_reassign_idempotency`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("new idempotency table must be empty")
+	}
 }

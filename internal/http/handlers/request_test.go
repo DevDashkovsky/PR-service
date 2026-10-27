@@ -22,6 +22,7 @@ func TestInvalidRequests(t *testing.T) {
 		{"missing PR field", `{}`, prHandler.CreatePR},
 		{"missing merge ID", `{}`, prHandler.MergePR},
 		{"invalid old ID", `{"pull_request_id":"pr"}`, prHandler.ReassignPR},
+		{"idempotency key in body", `{"pull_request_id":"pr","old_user_id":"u","idempotency_key":"key"}`, prHandler.ReassignPR},
 		{"trailing object", `{"pull_request_id":"pr"} {}`, prHandler.MergePR},
 		{"trailing garbage", `{"pull_request_id":"pr"} garbage`, prHandler.MergePR},
 		{"unknown field", `{"pull_request_id":"pr","extra":true}`, prHandler.MergePR},

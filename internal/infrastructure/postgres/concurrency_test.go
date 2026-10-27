@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
-	"path/filepath"
 	"pr-service/internal/domain/dto"
 	"pr-service/internal/domain/interfaces"
 	"pr-service/internal/domain/pr"
@@ -16,6 +16,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	testPRID           = "request"
+	testOldReviewer    = "old"
+	testSecondReviewer = "second"
 )
 
 func integrationDB(t *testing.T) *Postgres {
@@ -43,34 +49,37 @@ func integrationDB(t *testing.T) *Postgres {
 		}
 		admin.Close()
 	})
-	config, err := pgxpool.ParseConfig(dsn)
+	parsedDSN, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.ConnConfig.RuntimeParams["search_path"] = schema
-	config.ConnConfig.RuntimeParams["timezone"] = "Asia/Novosibirsk"
+	query := parsedDSN.Query()
+	query.Set("search_path", schema)
+	query.Set("timezone", "Asia/Novosibirsk")
+	parsedDSN.RawQuery = query.Encode()
+	scopedDSN := parsedDSN.String()
+	config, err := pgxpool.ParseConfig(scopedDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	ddl, err := os.ReadFile(filepath.Join("..", "..", "..", "init.sql"))
-	if err != nil {
+	db := &Postgres{conn: pool, dsn: scopedDSN}
+	if err := db.RunMigrations(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, string(ddl)); err != nil {
-		t.Fatal(err)
-	}
-	db := &Postgres{conn: pool}
 	members := make([]dto.TeamMemberDTO, 0, 5)
-	for _, id := range []string{"author", "old", "second", "replacement", "spare"} {
+	for _, id := range []string{"author", testOldReviewer, testSecondReviewer, "replacement", "spare"} {
 		members = append(members, dto.TeamMemberDTO{UserID: id, Username: id, IsActive: true})
 	}
 	if err := NewTeamRepo(db).CreateTeam(ctx, dto.TeamDTO{TeamName: "team", Members: members}); err != nil {
 		t.Fatal(err)
 	}
 	if err := NewPRRepo(db).WithinTransaction(ctx, func(tx interfaces.PRTransaction) error {
-		return tx.CreatePRWithReviewers(ctx, "request", "Change", "author", []string{"old", "second"})
+		return tx.CreatePRWithReviewers(ctx, testPRID, "Change", "author", []string{testOldReviewer, testSecondReviewer})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +104,7 @@ func testWaitingOperation(t *testing.T, operation string) {
 	}
 	defer rollback(first)
 	tx := &prTransaction{tx: first}
-	if _, err := tx.GetPRForUpdate(ctx, "request"); err != nil {
+	if _, err := tx.GetPRForUpdate(ctx, testPRID); err != nil {
 		t.Fatal(err)
 	}
 	snapshotReady := make(chan struct{})
@@ -107,7 +116,7 @@ func testWaitingOperation(t *testing.T, operation string) {
 		done <- repo.WithinTransaction(ctx, func(waiter interfaces.PRTransaction) error {
 			attempts++
 			if attempts == 1 {
-				if _, err := waiter.PRExists(ctx, "request"); err != nil {
+				if _, err := waiter.PRExists(ctx, testPRID); err != nil {
 					return err
 				}
 				close(snapshotReady)
@@ -117,15 +126,15 @@ func testWaitingOperation(t *testing.T, operation string) {
 					return ctx.Err()
 				}
 			}
-			result, err := waiter.GetPRForUpdate(ctx, "request")
+			result, err := waiter.GetPRForUpdate(ctx, testPRID)
 			if err != nil {
 				return err
 			}
 			observed = append([]string(nil), result.AssignedReviewers...)
 			if operation == "merge" {
-				return waiter.SetMerged(ctx, "request", time.Now().UTC())
+				return waiter.SetMerged(ctx, testPRID, time.Now().UTC())
 			}
-			return waiter.ReplaceReviewer(ctx, "request", "second", "spare")
+			return waiter.ReplaceReviewer(ctx, testPRID, testSecondReviewer, "spare")
 		})
 	}()
 	select {
@@ -133,11 +142,11 @@ func testWaitingOperation(t *testing.T, operation string) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	requireNoError(t, tx.ReplaceReviewer(ctx, "request", "old", "replacement"))
+	requireNoError(t, tx.ReplaceReviewer(ctx, testPRID, testOldReviewer, "replacement"))
 	close(releaseWaiter)
 	requireNoError(t, first.Commit(ctx))
 	requireNoError(t, <-done)
-	if attempts < 2 || slices.Contains(observed, "old") || !slices.Contains(observed, "replacement") {
+	if attempts < 2 || slices.Contains(observed, testOldReviewer) || !slices.Contains(observed, "replacement") {
 		t.Fatalf("attempts=%d stale reviewers=%v", attempts, observed)
 	}
 }
@@ -185,7 +194,7 @@ func TestConcurrentMergesPreserveTimestamp(t *testing.T) {
 	var wg sync.WaitGroup
 	for range count {
 		wg.Go(func() {
-			result, err := service.MergePR(ctx, dto.MergePullRequestRequest{PullRequestID: "request"})
+			result, err := service.MergePR(ctx, dto.MergePullRequestRequest{PullRequestID: testPRID})
 			if err != nil {
 				errs <- err
 				return

@@ -112,8 +112,9 @@ type MergedPullRequestDTO struct {
 }
 
 type ReassignPullRequestRequest struct {
-	PullRequestID string `json:"pull_request_id"`
-	OldUserID     string `json:"old_user_id"`
+	PullRequestID  string `json:"pull_request_id"`
+	OldUserID      string `json:"old_user_id"`
+	IdempotencyKey string `json:"-"`
 }
 
 type ReassignPullRequestResponse struct {

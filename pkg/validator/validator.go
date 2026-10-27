@@ -9,6 +9,20 @@ import (
 
 var ErrInvalidInput = errors.New("invalid input")
 
+// An empty key selects the legacy, non-idempotent request behavior.
+func ValidateIdempotencyKey(key string) error {
+	if len(key) > 128 {
+		return invalid("Idempotency-Key too long (max 128 characters)")
+	}
+	for _, char := range key {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' && char != '_' && char != '.' && char != ':' {
+			return invalid("Idempotency-Key must contain only letters, digits, hyphen, underscore, dot or colon")
+		}
+	}
+	return nil
+}
+
 func invalid(message string) error { return fmt.Errorf("%w: %s", ErrInvalidInput, message) }
 
 func ValidateTeamName(teamName string) error {
