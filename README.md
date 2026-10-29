@@ -227,6 +227,12 @@ curl -sS http://localhost:8080/pullRequest/merge \
 
 ## Проверки
 
+[GitHub Actions](.github/workflows/ci.yml) запускается для PR в `main`, push в
+`main` и вручную. Отдельные задания проверяют сборку, vet и линтер, тесты с
+детектором гонок и PostgreSQL 16.4, HTTP E2E на собранном Docker-образе.
+E2E ждут готовности API; при ошибке выводятся логи контейнеров, после прогона
+контейнеры и тестовый том удаляются.
+
 ```bash
 make test
 make test-race
@@ -239,7 +245,7 @@ make lint
 
 ```bash
 PR_SERVICE_TEST_DATABASE_URL='postgres://pruser:change_me@localhost:5432/prservice?sslmode=disable' \
-  go test -race -count=1 -v ./internal/infrastructure/postgres
+  make test-integration
 ```
 
 Каждый тест создаёт отдельную схему и удаляет её после выполнения. Пользователю тестовой БД нужно право создания схем.

@@ -1,7 +1,7 @@
 COMPOSE ?= $(shell if docker compose version >/dev/null 2>&1; then echo 'docker compose'; else echo 'docker-compose'; fi)
 GOLANGCI_LINT ?= golangci-lint
 
-.PHONY: help build up down restart logs clean test test-race test-e2e lint
+.PHONY: help build up down restart logs clean test test-race test-integration test-e2e lint
 
 help:
 	@echo "Доступные команды:"
@@ -13,6 +13,7 @@ help:
 	@echo "  make clean     - Остановить сервис и удалить данные БД"
 	@echo "  make test      - Запустить тесты"
 	@echo "  make test-race - Запустить тесты с детектором гонок"
+	@echo "  make test-integration - Тесты с race и PostgreSQL (PR_SERVICE_TEST_DATABASE_URL)"
 	@echo "  make test-e2e  - Проверить запущенный API (PR_SERVICE_E2E_URL)"
 	@echo "  make lint      - Проверить код и форматирование (golangci-lint v2)"
 
@@ -39,6 +40,10 @@ test:
 
 test-race:
 	go test -race ./...
+
+test-integration:
+	@test -n "$$PR_SERVICE_TEST_DATABASE_URL" || (echo 'Укажите PR_SERVICE_TEST_DATABASE_URL для тестовой PostgreSQL'; exit 1)
+	go test -race -count=1 ./...
 
 test-e2e:
 	@test -n "$(PR_SERVICE_E2E_URL)" || (echo 'Укажите PR_SERVICE_E2E_URL для тестового API'; exit 1)
